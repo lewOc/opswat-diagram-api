@@ -9,7 +9,7 @@ The service returns SVG first because SVG is easy to preview in a browser, embed
 - `POST /api/diagrams` accepts an existing structured diagram payload.
 - `POST /api/diagrams/from-text` accepts a plain-text use case and generates a diagram payload.
 - `POST /api/prompt-helper` turns lightweight form fields into a strong reusable prompt.
-- `POST /api/diagrams/from-helper` builds the prompt and generates the diagram in one call.
+- `POST /api/diagrams/from-helper` builds the prompt and generates either SVG or GPT Image output in one call.
 - `POST /api/image-diagrams/from-text` experimentally generates a PNG diagram with OpenAI image generation, always attaching local reference diagrams by default.
 - `GET /api/image-diagrams/references` lists the reference diagrams that will be attached to image-generation prompts.
 - `POST /api/diagrams/from-file` accepts an uploaded UTF-8 `.txt` use-case file.
@@ -56,6 +56,11 @@ For the lightweight prompt helper UI, open:
 http://127.0.0.1:8020/helper
 ```
 
+The helper UI includes an **Output method** selector:
+
+- `SVG architecture` for deterministic, editable SVG output.
+- `GPT Image` for a polished PNG render using the local reference diagrams and product icons.
+
 ## Plain Text Example
 
 ```bash
@@ -89,6 +94,36 @@ curl -s -X POST http://127.0.0.1:8020/api/prompt-helper \
     "show_opswat_scope": true,
     "show_lanes": true,
     "show_outside_scope_sync": true
+  }'
+```
+
+Generate directly from the helper as a GPT Image PNG:
+
+```bash
+curl -s -X POST http://127.0.0.1:8020/api/diagrams/from-helper \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Vendor / OEM Media Release to OT",
+    "use_case": "A Vendor / OEM Engineer brings USB / CD / Peripheral Media containing firmware updates, configuration tools, diagnostic packages, and patches. The media passes through MetaDefender Kiosk and MetaDefender Core for scanning, CDR, and policy checks. A clean verdict crosses an IT / OT airgap, then either MetaDefender Media Firewall or MetaDefender Media Validation enforces clean release to OT devices.",
+    "flow_steps": [
+      "Vendor / OEM Engineer",
+      "USB / CD / Peripheral Media",
+      "MetaDefender Kiosk",
+      "MetaDefender Core",
+      "Clean Verdict",
+      "IT / OT AIRGAP",
+      "MetaDefender Media Firewall OR MetaDefender Media Validation",
+      "OT Devices"
+    ],
+    "products": [
+      "MetaDefender Kiosk",
+      "MetaDefender Core",
+      "MetaDefender Media Firewall",
+      "MetaDefender Media Validation"
+    ],
+    "show_air_gap": true,
+    "output_method": "gpt_image",
+    "image_quality": "high"
   }'
 ```
 

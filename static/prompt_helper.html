@@ -264,7 +264,7 @@
     <div>
       <div class="brand">OPSWAT.</div>
       <h1>Diagram Prompt Helper</h1>
-      <p class="subhead">Build a clean diagram prompt from a few structured fields, then generate the SVG from the same API.</p>
+      <p class="subhead">Build a clean diagram prompt from a few structured fields, then generate either an editable SVG or a GPT Image render.</p>
     </div>
   </header>
 
@@ -285,6 +285,26 @@
             </select>
           </div>
         </div>
+
+        <div class="grid-two">
+          <div>
+            <label for="output-method">Output method</label>
+            <select id="output-method">
+              <option value="svg">SVG architecture</option>
+              <option value="gpt_image">GPT Image</option>
+            </select>
+          </div>
+          <div>
+            <label for="image-quality">Image quality</label>
+            <select id="image-quality">
+              <option value="high">High</option>
+              <option value="medium">Medium</option>
+              <option value="low">Low</option>
+              <option value="auto">Auto</option>
+            </select>
+          </div>
+        </div>
+        <div class="hint">SVG is deterministic and editable. GPT Image uses your reference diagrams and product icons to create a polished PNG.</div>
 
         <label for="account">Account or project</label>
         <input id="account" type="text" placeholder="Optional">
@@ -380,6 +400,9 @@ Site NAS</textarea>
         show_outside_scope_sync: $("outside-sync").checked,
         include_purdue: $("purdue").checked,
         extra_instructions: $("extra").value.trim(),
+        output_method: $("output-method").value,
+        image_size: "1536x1024",
+        image_quality: $("image-quality").value,
         mode: $("mode").value,
         include_svg: false
       };
@@ -442,11 +465,16 @@ Site NAS</textarea>
         $("prompt").textContent = data.helper_prompt;
         showWarnings(data.helper_warnings);
         const diagram = $("diagram");
-        diagram.src = data.svg_url;
+        const isImage = data.output_method === "gpt_image";
+        const resultUrl = isImage ? data.image_url : data.svg_url;
+        const metadataUrl = data.json_url;
+        diagram.src = resultUrl;
         diagram.style.display = "block";
         $("links").style.display = "flex";
-        $("links").innerHTML = `<a href="${data.svg_url}" target="_blank" rel="noreferrer">Open SVG</a><a href="${data.json_url}" target="_blank" rel="noreferrer">Open JSON</a>`;
-        $("status").textContent = "Diagram generated.";
+        $("links").innerHTML = isImage
+          ? `<a href="${resultUrl}" target="_blank" rel="noreferrer">Open PNG</a><a href="${metadataUrl}" target="_blank" rel="noreferrer">Open metadata</a>`
+          : `<a href="${resultUrl}" target="_blank" rel="noreferrer">Open SVG</a><a href="${metadataUrl}" target="_blank" rel="noreferrer">Open JSON</a>`;
+        $("status").textContent = isImage ? "GPT image generated." : "Diagram generated.";
         $("status").className = "status ok";
       } catch (error) {
         $("status").textContent = error.message;

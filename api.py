@@ -99,6 +99,9 @@ class PromptHelperRequest(BaseModel):
     show_outside_scope_sync: bool = False
     include_purdue: bool = False
     extra_instructions: str = Field(default="", max_length=1500)
+    output_method: Literal["svg", "gpt_image"] = "svg"
+    image_size: Literal["1024x1024", "1536x1024", "1024x1536"] = "1536x1024"
+    image_quality: Literal["low", "medium", "high", "auto"] = "high"
     mode: Literal["auto", "claude", "heuristic"] = "auto"
     model: Optional[str] = Field(default=None, max_length=120)
     include_svg: bool = False
@@ -202,6 +205,25 @@ def helper_to_text_request(request: PromptHelperRequest) -> tuple[DiagramTextReq
             mode=request.mode,
             include_purdue=request.include_purdue,
             include_svg=request.include_svg,
+        ),
+        warnings,
+        prompt,
+    )
+
+
+def helper_to_image_request(request: PromptHelperRequest) -> tuple[ImageDiagramRequest, list[str], str]:
+    prompt, warnings = build_helper_prompt(request)
+    return (
+        ImageDiagramRequest(
+            prompt=prompt,
+            title=request.title,
+            account_name=request.account_name,
+            model=request.model,
+            size=request.image_size,
+            quality=request.image_quality,
+            output_format="png",
+            include_reference_diagrams=True,
+            include_product_icons=True,
         ),
         warnings,
         prompt,
@@ -678,20 +700,42 @@ async def prompt_helper(payload: PromptHelperRequest) -> dict[str, Any]:
         include_purdue=payload.include_purdue,
         include_svg=payload.include_svg,
     )
+    image_payload = ImageDiagramRequest(
+        prompt=prompt,
+        title=payload.title,
+        account_name=payload.account_name,
+        model=payload.model,
+        size=payload.image_size,
+        quality=payload.image_quality,
+    )
     return {
         "prompt": prompt,
         "warnings": warnings,
+        "output_method": payload.output_method,
         "suggested_payload": text_payload.model_dump(),
+        "suggested_image_payload": image_payload.model_dump(),
     }
 
 
 @app.post("/api/diagrams/from-helper")
 async def generate_diagram_from_helper(payload: PromptHelperRequest) -> dict[str, Any]:
+    if payload.output_method == "gpt_image":
+        image_request, warnings, prompt = helper_to_image_request(payload)
+        try:
+            result = await run_in_threadpool(create_image_diagram, image_request)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=str(exc)) from exc
+        result["output_method"] = "gpt_image"
+        result["helper_prompt"] = prompt
+        result["helper_warnings"] = warnings
+        return result
+
     text_request, warnings, prompt = helper_to_text_request(payload)
     try:
         result = await run_in_threadpool(create_diagram_from_text, text_request)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+    result["output_method"] = "svg"
     result["helper_prompt"] = prompt
     result["helper_warnings"] = warnings
     return result
