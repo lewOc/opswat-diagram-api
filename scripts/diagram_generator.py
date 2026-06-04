@@ -58,6 +58,8 @@ FLOW_ROLE_COLORS = {
     "ingress": "#E23B3B",
     "egress": "#2DBE6C",
     "primary": "#111827",
+    "bidirectional": "#111827",
+    "secondary": "#9AA7B8",
     "sync": "#2563EB",
 }
 
@@ -219,6 +221,8 @@ def flow_marker_id(flow: dict[str, Any]) -> str:
     role = flow.get("role")
     if role in {"ingress", "egress", "primary", "sync"}:
         return f"{role}-arrow"
+    if role == "bidirectional":
+        return "primary-arrow"
     return "primary-arrow"
 
 
@@ -442,7 +446,7 @@ def node_size(node: dict[str, Any]) -> tuple[int, int]:
         return int(node["width"]), int(node["height"])
     kind = node.get("kind", "process")
     if kind == "product":
-        return 132, 118
+        return 120, 108
     if kind == "actor":
         return 82, 64
     if kind == "source":
@@ -451,9 +455,9 @@ def node_size(node: dict[str, Any]) -> tuple[int, int]:
         return 160, 112
     if kind == "quarantine":
         return 112, 64
-    if kind == "verdict":
+    if kind in {"verdict", "document"}:
         return 88, 74
-    if kind == "entity":
+    if kind in {"entity", "destination"}:
         return 120, 92
     return 96, 58
 
@@ -471,6 +475,10 @@ def connection_bounds(node: dict[str, Any]) -> tuple[int, int, int, int]:
     x = int(node["x"])
     y = int(node["y"])
     kind = node.get("kind", "process")
+    if kind == "document":
+        kind = "verdict"
+    if kind == "destination":
+        kind = "entity"
     if kind == "product":
         return x + 12, y, 108, 76
     if kind == "verdict":
@@ -637,9 +645,9 @@ def draw_node(node: dict[str, Any]) -> str:
         kicker, caption = product_caption(product_type_value, raw_label)
         return f"""
           <g class="product-node">
-            {draw_product_icon(product_type_value, x + 22, y, node.get("id", "product"), 88, 72)}
-            <text x="{x+66}" y="{y+84}" text-anchor="middle" class="product-kicker">{esc(kicker)}</text>
-            {draw_multiline_text(x + 66, y + 101, wrap_label(caption, 16, 2), "product-caption", line_height=16)}
+            {draw_product_icon(product_type_value, x + 25, y, node.get("id", "product"), 70, 62)}
+            <text x="{x+60}" y="{y+74}" text-anchor="middle" class="product-kicker">{esc(kicker)}</text>
+            {draw_multiline_text(x + 60, y + 88, wrap_label(caption, 17, 2), "product-caption", line_height=13)}
           </g>
         """
     if kind == "actor":
@@ -718,7 +726,26 @@ def draw_flow(flow: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> s
     color = flow_color(flow)
     marker_id = flow_marker_id(flow)
     label = esc(flow.get("label", ""))
-    if flow.get("route") == "side":
+    is_bidirectional = bool(flow.get("bidirectional")) or flow.get("role") == "bidirectional"
+    is_secondary = flow.get("role") == "secondary"
+    if (
+        is_bidirectional
+        and source.get("kind") == "product"
+        and target.get("kind") == "product"
+        and abs(source_center[0] - target_center[0]) < 80
+    ):
+        top = min(source_bounds[1] + source_bounds[3], target_bounds[1] + target_bounds[3]) + 8
+        bottom = max(source_bounds[1], target_bounds[1]) - 8
+        if bottom <= top:
+            top = min(source_center[1], target_center[1]) + 18
+            bottom = max(source_center[1], target_center[1]) - 18
+        x1 = max(source_bounds[0] + source_bounds[2], target_bounds[0] + target_bounds[2]) + 8
+        x2 = x1 + 18
+        return f"""
+          <path d="M {x1} {top} L {x1} {bottom}" fill="none" stroke="{color}" stroke-width="1.25" marker-end="url(#{marker_id})"/>
+          <path d="M {x2} {bottom} L {x2} {top}" fill="none" stroke="{color}" stroke-width="1.25" marker-end="url(#{marker_id})"/>
+        """
+    elif flow.get("route") == "side":
         sx = source_bounds[0] + source_bounds[2]
         sy = source_center[1]
         tx = target_bounds[0] + target_bounds[2]
@@ -750,10 +777,22 @@ def draw_flow(flow: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> s
             <path d="M7 1 v12 M1 7 h12 M3 3 l8 8 M11 3 l-8 8" stroke="{THEME["red"]}" stroke-width="1.2"/>
           </g>
         """
-    marker_start = f' marker-start="url(#{marker_id})"' if flow.get("bidirectional") else ""
-    label_text = f'<text x="{mid_x}" y="{label_y}" text-anchor="middle" class="flow-label" fill="{color}">{label}</text>' if label else ""
+    marker_start = f' marker-start="url(#{marker_id})"' if is_bidirectional else ""
+    marker_end = "" if is_secondary else f' marker-end="url(#{marker_id})"'
+    stroke_dash = ' stroke-dasharray="7 6"' if is_secondary else ""
+    stroke_width = "1.2" if is_secondary else "1.35"
+    suppress_label = (
+        flow.get("role") == "bidirectional"
+        and source.get("kind") == "product"
+        and target.get("kind") == "product"
+    )
+    label_text = (
+        f'<text x="{mid_x}" y="{label_y}" text-anchor="middle" class="flow-label" fill="{color}">{label}</text>'
+        if label and flow.get("show_label") and not suppress_label
+        else ""
+    )
     return f"""
-      <path d="{path}" fill="none" stroke="{color}" stroke-width="2"{marker_start} marker-end="url(#{marker_id})"/>
+      <path d="{path}" fill="none" stroke="{color}" stroke-width="{stroke_width}"{stroke_dash}{marker_start}{marker_end}/>
       {glyph}
       {sync}
       {quarantine}
@@ -767,7 +806,7 @@ def render_svg(spec: dict[str, Any]) -> str:
     nodes_by_id = {node["id"]: node for node in nodes}
     title_lines = wrap_words(spec.get("title"), 44, 2)
     subtitle = str(spec.get("subtitle") or "").strip()
-    title_font = 30 if not subtitle and len(title_lines) == 1 else 34 if len(title_lines) == 1 else 28
+    title_font = 24 if not subtitle and len(title_lines) == 1 else 30 if len(title_lines) == 1 else 26
     title_y = 54 if not subtitle else 72
     title_color = esc(spec.get("title_color") or THEME["ink"])
     title_svg = "\n".join(
@@ -794,7 +833,7 @@ def render_svg(spec: dict[str, Any]) -> str:
     account = spec.get("account_name")
     account_text = f'<text x="1240" y="44" text-anchor="end" class="account">{esc(account)}</text>' if account else ""
     subtitle_text = f'<text x="16" y="32" class="subtitle">{esc(subtitle)}</text>' if subtitle else ""
-    figure_caption = spec.get("figure_caption")
+    figure_caption = truncate(spec.get("figure_caption"), 78) if spec.get("figure_caption") else ""
     figure_text = (
         f'<text x="{WIDTH // 2}" y="690" text-anchor="middle" class="figure-caption">{esc(figure_caption)}</text>'
         if figure_caption
@@ -814,21 +853,21 @@ def render_svg(spec: dict[str, Any]) -> str:
     <filter id="kioskRed" color-interpolation-filters="sRGB">
       <feColorMatrix type="matrix" values="0.55 0.05 0.05 0 0.24  0.10 0.04 0.04 0 0.03  0.08 0.03 0.03 0 0.03  0 0 0 1 0"/>
     </filter>
-    <marker id="ingress-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto-start-reverse"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["ingress"]}"/></marker>
-    <marker id="egress-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto-start-reverse"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["egress"]}"/></marker>
-    <marker id="primary-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto-start-reverse"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["primary"]}"/></marker>
-    <marker id="sync-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto-start-reverse"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["sync"]}"/></marker>
+    <marker id="ingress-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M0,0 L7,4 L0,8" fill="none" stroke="{FLOW_ROLE_COLORS["ingress"]}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="egress-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M0,0 L7,4 L0,8" fill="none" stroke="{FLOW_ROLE_COLORS["egress"]}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="primary-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M0,0 L7,4 L0,8" fill="none" stroke="{FLOW_ROLE_COLORS["primary"]}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    <marker id="sync-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto-start-reverse"><path d="M0,0 L7,4 L0,8" fill="none" stroke="{FLOW_ROLE_COLORS["sync"]}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></marker>
     <style>
       @font-face {{ font-family: 'Simplon Norm'; src: local('Simplon Norm'); }}
       svg {{ background: {THEME["white"]}; font-family: 'Simplon Norm', Arial, sans-serif; }}
       .subtitle {{ font-size: 17px; letter-spacing: 10px; fill: {THEME["blue"]}; }}
-      .title {{ font-size: {title_font}px; font-weight: 600; fill: {title_color}; }}
+      .title {{ font-size: {title_font}px; font-weight: 500; fill: {title_color}; }}
       .account {{ font-size: 14px; font-weight: 700; fill: {THEME["ink"]}; }}
-      .figure-caption {{ font-size: 17px; font-style: italic; fill: {THEME["ink"]}; }}
+      .figure-caption {{ font-size: 14px; font-style: italic; fill: {THEME["ink"]}; }}
       .zone-label {{ font-size: 10.5px; font-weight: 800; letter-spacing: 0; }}
       .zone-line {{ stroke: {THEME["line"]}; stroke-width: 1; stroke-dasharray: 4 4; }}
       .zone-container {{ fill: #FFFFFF; stroke: #9AA7B8; stroke-width: 1; stroke-dasharray: 8 6; opacity: 0.72; }}
-      .zone-title {{ font-size: 16px; font-weight: 800; letter-spacing: 0; }}
+      .zone-title {{ font-size: 13px; font-weight: 600; letter-spacing: 0; }}
       .purdue-line {{ stroke: {THEME["line"]}; stroke-width: 1; }}
       .purdue-label {{ font-size: 9px; fill: {THEME["muted"]}; }}
       .purdue-label.green {{ fill: {THEME["zone_green"]}; }}
@@ -841,9 +880,9 @@ def render_svg(spec: dict[str, Any]) -> str:
       .mini-box {{ fill: {THEME["white"]}; stroke: #9AA7B8; stroke-width: 1; }}
       .node-label {{ font-size: 12px; font-weight: 700; fill: {THEME["ink"]}; white-space: pre; }}
       .node-label.light {{ fill: {THEME["white"]}; }}
-      .product-kicker {{ font-size: 10px; fill: {THEME["muted"]}; }}
-      .product-caption {{ font-size: 16px; font-weight: 700; fill: {THEME["ink"]}; white-space: pre; }}
-      .tiny {{ font-size: 9px; fill: {THEME["ink"]}; white-space: pre; }}
+      .product-kicker {{ font-size: 7.5px; fill: {THEME["muted"]}; }}
+      .product-caption {{ font-size: 12px; font-weight: 600; fill: {THEME["ink"]}; white-space: pre; }}
+      .tiny {{ font-size: 8px; fill: {THEME["ink"]}; white-space: pre; }}
       .inactive-text {{ fill: {THEME["inactive_text"]}; }}
       .flow-label {{ font-size: 9px; font-weight: 800; paint-order: stroke; stroke: #FFFFFF; stroke-width: 3px; stroke-linejoin: round; }}
       .line-icon,.icon-path {{ fill: none; stroke: {THEME["ink"]}; stroke-width: 1.2; }}

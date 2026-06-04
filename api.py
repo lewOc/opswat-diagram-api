@@ -262,6 +262,12 @@ def claude_payload(request: DiagramTextRequest) -> dict[str, Any]:
             "or quarantine paths unless the user asks for them or the text clearly discusses malicious "
             "files being blocked. If the user defines two zones, return exactly those two zones. For "
             "simple use cases, prefer pattern=custom with explicit nodes and flows."
+            " Use supported node kinds only: source, product, verdict, entity, actor, zone, quarantine. "
+            "Use verdict for document/check nodes and entity for NAS, servers, users, or external systems. "
+            "Keep connector labels off unless they are essential; use show_label=true only for labels the "
+            "diagram must visibly display. Keep every zone and node fully inside the 1280x720 canvas: "
+            "use x <= 1120 for normal nodes, y <= 600 for product nodes, y <= 620 for compact nodes, "
+            "and keep zone heights within the bottom margin."
         ),
         messages=[
             {
@@ -279,7 +285,7 @@ def claude_payload(request: DiagramTextRequest) -> dict[str, Any]:
                     '  "include_quarantine": false,\n'
                     '  "zones": [{"label": "IT SIDE", "x": 60, "y": 150, "width": 610, "height": 440, "color": "#2563EB"}],\n'
                     '  "nodes": [{"id": "kiosk", "label": "Kiosk", "kind": "product", "product_type": "kiosk", "x": 310, "y": 315, "variant": "active"}],\n'
-                    '  "flows": [{"from": "kiosk", "to": "core", "role": "primary", "label": "scan"}],\n'
+                    '  "flows": [{"from": "kiosk", "to": "core", "role": "bidirectional", "label": "", "show_label": false}],\n'
                     '  "use_case": {\n'
                     '    "title": "use case title",\n'
                     '    "account_trigger": "why this matters",\n'
