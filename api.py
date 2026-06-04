@@ -102,6 +102,7 @@ class PromptHelperRequest(BaseModel):
     output_method: Literal["svg", "gpt_image"] = "svg"
     image_size: Literal["1024x1024", "1536x1024", "1024x1536"] = "1536x1024"
     image_quality: Literal["low", "medium", "high", "auto"] = "high"
+    openai_api_key: str = Field(default="", max_length=300)
     mode: Literal["auto", "claude", "heuristic"] = "auto"
     model: Optional[str] = Field(default=None, max_length=120)
     include_svg: bool = False
@@ -119,6 +120,7 @@ class ImageDiagramRequest(BaseModel):
     include_product_icons: bool = True
     max_reference_diagrams: int = Field(default=8, ge=0, le=16)
     max_product_icons: int = Field(default=8, ge=0, le=16)
+    openai_api_key: str = Field(default="", max_length=300)
 
 
 def clean_list(values: list[str], limit: int = 80) -> list[str]:
@@ -224,6 +226,7 @@ def helper_to_image_request(request: PromptHelperRequest) -> tuple[ImageDiagramR
             output_format="png",
             include_reference_diagrams=True,
             include_product_icons=True,
+            openai_api_key=request.openai_api_key,
         ),
         warnings,
         prompt,
@@ -310,9 +313,9 @@ Hard requirements:
 
 
 def create_image_diagram(request: ImageDiagramRequest) -> dict[str, Any]:
-    api_key = os.environ.get("OPENAI_API_KEY")
+    api_key = request.openai_api_key.strip() or os.environ.get("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("OPENAI_API_KEY is not set")
+        raise RuntimeError("OpenAI API key is required for GPT Image output")
     try:
         from openai import OpenAI
     except ImportError as exc:

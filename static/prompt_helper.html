@@ -84,7 +84,7 @@
       text-transform: uppercase;
     }
 
-    input[type="text"], textarea, select {
+    input[type="text"], input[type="password"], textarea, select {
       width: 100%;
       border: 1px solid var(--line);
       border-radius: 6px;
@@ -306,6 +306,10 @@
         </div>
         <div class="hint">SVG is deterministic and editable. GPT Image uses your reference diagrams and product icons to create a polished PNG.</div>
 
+        <label for="openai-key">OpenAI API key for GPT Image</label>
+        <input id="openai-key" type="password" autocomplete="off" placeholder="Required only for GPT Image output">
+        <div class="hint">Used for this generation request only. It is not shown in the generated prompt or saved in the result metadata.</div>
+
         <label for="account">Account or project</label>
         <input id="account" type="text" placeholder="Optional">
 
@@ -403,6 +407,7 @@ Site NAS</textarea>
         output_method: $("output-method").value,
         image_size: "1536x1024",
         image_quality: $("image-quality").value,
+        openai_api_key: $("openai-key").value.trim(),
         mode: $("mode").value,
         include_svg: false
       };

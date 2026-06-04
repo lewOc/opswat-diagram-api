@@ -36,7 +36,7 @@ cp .env.example .env
 
 Set `ANTHROPIC_API_KEY` in `.env` for Claude-supported text interpretation.
 
-Set `OPENAI_API_KEY` in `.env` for the experimental image-generation renderer.
+For GPT Image output, either set `OPENAI_API_KEY` in `.env` for server-side testing or send `openai_api_key` in the request. The helper UI has an API-key field for per-request use.
 
 ## Run
 
@@ -123,7 +123,8 @@ curl -s -X POST http://127.0.0.1:8020/api/diagrams/from-helper \
     ],
     "show_air_gap": true,
     "output_method": "gpt_image",
-    "image_quality": "high"
+    "image_quality": "high",
+    "openai_api_key": "sk-..."
   }'
 ```
 
@@ -152,7 +153,8 @@ curl -s -X POST http://127.0.0.1:8020/api/image-diagrams/from-text \
     "title": "Vendor / OEM Media Release to OT",
     "prompt": "Create an OPSWAT-style light technical architecture diagram showing a Vendor / OEM Engineer bringing USB / CD / Peripheral Media through MetaDefender Kiosk, MetaDefender Core, a Clean Verdict, an IT / OT AIRGAP, then either MetaDefender Media Firewall OR MetaDefender Media Validation before release to OT Devices (PLCs, RTUs, etc.). Match the attached reference diagram style closely.",
     "size": "1536x1024",
-    "quality": "high"
+    "quality": "high",
+    "openai_api_key": "sk-..."
   }'
 ```
 
