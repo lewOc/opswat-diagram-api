@@ -42,6 +42,7 @@ def project_path_from_env(name: str, default: Path) -> Path:
 
 DIAGRAM_OUTPUT_DIR = project_path_from_env("DIAGRAM_OUTPUT_DIR", PROJECT / "outputs" / "diagrams")
 DIAGRAM_SCRIPT = PROJECT / "scripts" / "diagram_generator.py"
+STATIC_DIR = PROJECT / "static"
 DEFAULT_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
 
 
@@ -75,6 +76,115 @@ class DiagramTextRequest(BaseModel):
     mode: Literal["auto", "claude", "heuristic"] = "auto"
     include_purdue: bool = False
     include_svg: bool = False
+
+
+class PromptHelperRequest(BaseModel):
+    title: str = Field(..., min_length=3, max_length=180)
+    use_case: str = Field(..., min_length=10, max_length=4000)
+    account_name: str = Field(default="", max_length=200)
+    lanes: list[str] = Field(default_factory=list, max_length=8)
+    flow_steps: list[str] = Field(default_factory=list, max_length=18)
+    products: list[str] = Field(default_factory=list, max_length=12)
+    show_opswat_scope: bool = True
+    show_lanes: bool = True
+    show_quarantine: bool = False
+    show_air_gap: bool = False
+    show_outside_scope_sync: bool = False
+    include_purdue: bool = False
+    extra_instructions: str = Field(default="", max_length=1500)
+    mode: Literal["auto", "claude", "heuristic"] = "auto"
+    model: Optional[str] = Field(default=None, max_length=120)
+    include_svg: bool = False
+
+
+def clean_list(values: list[str], limit: int = 80) -> list[str]:
+    cleaned: list[str] = []
+    for value in values:
+        item = re.sub(r"\s+", " ", str(value)).strip()
+        if item:
+            cleaned.append(item[:limit])
+    return cleaned
+
+
+def build_helper_prompt(request: PromptHelperRequest) -> tuple[str, list[str]]:
+    lanes = clean_list(request.lanes, 80)
+    flow_steps = clean_list(request.flow_steps, 120)
+    products = clean_list(request.products, 120)
+    warnings: list[str] = []
+    if len(flow_steps) > 10:
+        warnings.append("This flow has many steps; the diagram may need multiple lanes or a future multi-slide export.")
+    if len(lanes) > 4:
+        warnings.append("More than four lanes can become dense on one 1280x720 canvas.")
+    if not flow_steps:
+        warnings.append("No flow steps were provided, so Claude will infer the flow from the use-case description.")
+    if not products:
+        warnings.append("No products were selected, so Claude will infer likely OPSWAT products.")
+
+    lane_text = "\n".join(f"- {lane}" for lane in lanes) if lanes else "- No explicit lanes. Use the simplest layout that fits the use case."
+    flow_text = " -> ".join(flow_steps) if flow_steps else "Infer the clearest left-to-right flow from the use-case description."
+    product_text = "\n".join(f"- {product}" for product in products) if products else "- Infer from the description, using only real OPSWAT product names."
+    show_items = []
+    if request.show_opswat_scope:
+        show_items.append("a dashed rounded OPSWAT scope boundary around OPSWAT-controlled components")
+    if request.show_lanes and lanes:
+        show_items.append("the requested lanes as horizontal dashed lane containers")
+    if request.show_air_gap:
+        show_items.append("an air gap where the flow crosses between security domains")
+    if request.show_outside_scope_sync:
+        show_items.append("outside-scope synchronization as a dashed annotation, not as a heavy normal data-flow line")
+    if request.show_quarantine:
+        show_items.append("a quarantine or blocked-file path")
+    else:
+        show_items.append("no quarantine or blocked-file path unless the use case explicitly requires it")
+    show_text = "\n".join(f"- {item}" for item in show_items)
+
+    extra = request.extra_instructions.strip()
+    extra_text = f"\nAdditional instructions:\n{extra}\n" if extra else ""
+    prompt = f"""Create an OPSWAT-style light diagram titled "{request.title.strip()}".
+
+Use case:
+{request.use_case.strip()}
+
+Lanes or repeated site rows:
+{lane_text}
+
+Main left-to-right flow:
+{flow_text}
+
+Products involved:
+{product_text}
+
+Show:
+{show_text}
+{extra_text}
+Design rules:
+- Use a white canvas, OPSWAT blue title text, thin dark-navy arrows, dashed grey scope boundaries, and restrained grey labels.
+- Keep normal left-to-right data flows as straight horizontal arrows wherever possible.
+- Avoid unnecessary right-angle routing unless a connector must route around a node.
+- Put OPSWAT product labels underneath product icons, not inside large cards.
+- Use simple white cards for external sources and destinations.
+- Keep connector labels minimal; only show labels that materially clarify the diagram.
+- Keep every node and zone inside a 1280x720 canvas.
+- Do not add Purdue levels, extra zones, extra products, or quarantine paths unless requested above.
+"""
+    return prompt.strip(), warnings
+
+
+def helper_to_text_request(request: PromptHelperRequest) -> tuple[DiagramTextRequest, list[str], str]:
+    prompt, warnings = build_helper_prompt(request)
+    return (
+        DiagramTextRequest(
+            description=prompt,
+            account_name=request.account_name,
+            title=request.title,
+            model=request.model,
+            mode=request.mode,
+            include_purdue=request.include_purdue,
+            include_svg=request.include_svg,
+        ),
+        warnings,
+        prompt,
+    )
 
 
 def safe_filename(filename: str) -> bool:
@@ -133,6 +243,18 @@ def infer_title(description: str, supplied_title: str) -> str:
 
 def wants_quarantine(description: str) -> bool:
     text = description.lower()
+    if any(
+        phrase in text
+        for phrase in [
+            "no quarantine",
+            "without quarantine",
+            "do not add quarantine",
+            "do not include quarantine",
+            "no blocked-file path",
+            "no blocked file path",
+        ]
+    ):
+        return False
     return any(word in text for word in ["quarantine", "blocked", "malicious", "reject", "rejected", "threat", "infected"])
 
 
@@ -349,8 +471,17 @@ def root() -> dict[str, Any]:
         "service": "OPSWAT Diagram API",
         "version": "0.1.0",
         "docs": "/docs",
+        "helper": "/helper",
         "health": "/api/health",
     }
+
+
+@app.get("/helper")
+def prompt_helper_page() -> FileResponse:
+    path = STATIC_DIR / "prompt_helper.html"
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Prompt helper not found")
+    return FileResponse(path, media_type="text/html")
 
 
 @app.get("/api/health")
@@ -361,6 +492,37 @@ def health() -> dict[str, Any]:
         "anthropic_configured": bool(os.environ.get("ANTHROPIC_API_KEY")),
         "outputs": str(DIAGRAM_OUTPUT_DIR),
     }
+
+
+@app.post("/api/prompt-helper")
+async def prompt_helper(payload: PromptHelperRequest) -> dict[str, Any]:
+    prompt, warnings = build_helper_prompt(payload)
+    text_payload = DiagramTextRequest(
+        description=prompt,
+        account_name=payload.account_name,
+        title=payload.title,
+        model=payload.model,
+        mode=payload.mode,
+        include_purdue=payload.include_purdue,
+        include_svg=payload.include_svg,
+    )
+    return {
+        "prompt": prompt,
+        "warnings": warnings,
+        "suggested_payload": text_payload.model_dump(),
+    }
+
+
+@app.post("/api/diagrams/from-helper")
+async def generate_diagram_from_helper(payload: PromptHelperRequest) -> dict[str, Any]:
+    text_request, warnings, prompt = helper_to_text_request(payload)
+    try:
+        result = await run_in_threadpool(create_diagram_from_text, text_request)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    result["helper_prompt"] = prompt
+    result["helper_warnings"] = warnings
+    return result
 
 
 @app.post("/api/diagrams")

@@ -1,0 +1,465 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OPSWAT Diagram Prompt Helper</title>
+  <style>
+    :root {
+      --blue: #2563eb;
+      --ink: #050e22;
+      --muted: #64748b;
+      --line: #cbd5e1;
+      --soft: #f6f8fb;
+      --green: #16a34a;
+      --red: #dc2626;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: #ffffff;
+      color: var(--ink);
+      font-family: "Simplon Norm", Inter, Arial, sans-serif;
+      font-size: 14px;
+    }
+
+    header {
+      border-top: 6px solid var(--blue);
+      border-bottom: 1px solid var(--line);
+      padding: 22px 32px 18px;
+      display: flex;
+      justify-content: space-between;
+      gap: 24px;
+      align-items: flex-start;
+    }
+
+    .brand {
+      font-weight: 800;
+      letter-spacing: 1px;
+      font-size: 18px;
+    }
+
+    h1 {
+      margin: 14px 0 0;
+      font-size: 28px;
+      line-height: 1.12;
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .subhead {
+      margin: 8px 0 0;
+      color: var(--muted);
+      max-width: 760px;
+      line-height: 1.45;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(360px, 520px) 1fr;
+      min-height: calc(100vh - 116px);
+    }
+
+    .panel {
+      border-right: 1px solid var(--line);
+      padding: 24px 28px 32px;
+      background: #ffffff;
+      overflow: auto;
+    }
+
+    .preview {
+      padding: 24px 28px 32px;
+      background: var(--soft);
+      overflow: auto;
+    }
+
+    label {
+      display: block;
+      margin: 18px 0 7px;
+      color: #334155;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    input[type="text"], textarea, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 10px 11px;
+      color: var(--ink);
+      background: #ffffff;
+      font: inherit;
+      line-height: 1.4;
+    }
+
+    textarea { min-height: 88px; resize: vertical; }
+
+    .hint {
+      margin-top: 6px;
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.35;
+    }
+
+    .grid-two {
+      display: grid;
+      grid-template-columns: 1fr 132px;
+      gap: 12px;
+    }
+
+    .products {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .check {
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 9px 10px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      background: #ffffff;
+      min-height: 40px;
+    }
+
+    .toggles {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--blue);
+      flex: 0 0 auto;
+    }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 22px;
+      flex-wrap: wrap;
+    }
+
+    button {
+      border: 1px solid transparent;
+      border-radius: 6px;
+      padding: 10px 14px;
+      font-weight: 700;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .primary {
+      background: var(--blue);
+      color: #ffffff;
+    }
+
+    .secondary {
+      background: #ffffff;
+      color: var(--ink);
+      border-color: var(--line);
+    }
+
+    button:disabled {
+      opacity: 0.6;
+      cursor: wait;
+    }
+
+    .section-title {
+      margin: 0 0 12px;
+      color: var(--blue);
+      font-size: 12px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .output-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 18px;
+    }
+
+    .box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      padding: 16px;
+    }
+
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      margin: 0;
+      color: #111827;
+      font-size: 12px;
+      line-height: 1.45;
+      max-height: 360px;
+      overflow: auto;
+    }
+
+    .status {
+      min-height: 20px;
+      margin-top: 12px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .status.error { color: var(--red); }
+    .status.ok { color: var(--green); }
+
+    .diagram-frame {
+      width: 100%;
+      min-height: 520px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #ffffff;
+      display: none;
+    }
+
+    .result-links {
+      display: none;
+      margin-top: 10px;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .result-links a {
+      color: var(--blue);
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .warnings {
+      display: none;
+      margin: 0 0 14px;
+      padding: 10px 12px;
+      border: 1px solid #fde68a;
+      border-radius: 6px;
+      color: #92400e;
+      background: #fffbeb;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+
+    @media (max-width: 980px) {
+      main { grid-template-columns: 1fr; }
+      .panel { border-right: 0; border-bottom: 1px solid var(--line); }
+      header { padding: 18px 20px; }
+      .panel, .preview { padding: 20px; }
+      .products, .toggles, .grid-two { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <div class="brand">OPSWAT.</div>
+      <h1>Diagram Prompt Helper</h1>
+      <p class="subhead">Build a clean diagram prompt from a few structured fields, then generate the SVG from the same API.</p>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <form id="helper-form">
+        <div class="grid-two">
+          <div>
+            <label for="title">Diagram title</label>
+            <input id="title" type="text" value="Use Case 1 - Secure USB Ingest to NAS">
+          </div>
+          <div>
+            <label for="mode">Mode</label>
+            <select id="mode">
+              <option value="auto">Auto</option>
+              <option value="claude">Claude</option>
+              <option value="heuristic">Heuristic</option>
+            </select>
+          </div>
+        </div>
+
+        <label for="account">Account or project</label>
+        <input id="account" type="text" placeholder="Optional">
+
+        <label for="use-case">Use-case description</label>
+        <textarea id="use-case">Engineers bring USB removable media into two sites. Files must be scanned by MetaDefender Kiosk and MetaDefender Core before clean files are moved through MetaDefender Managed File Transfer to each site's NAS.</textarea>
+
+        <label for="lanes">Lanes or repeated site rows</label>
+        <textarea id="lanes">London MSOC
+IBC</textarea>
+        <div class="hint">One per line. Leave blank for a single-flow diagram.</div>
+
+        <label for="flow">Main flow steps</label>
+        <textarea id="flow">USB Device / Removable Media
+MetaDefender Kiosk
+MetaDefender Core
+Clean verdict
+MetaDefender Managed File Transfer
+Site NAS</textarea>
+
+        <label>Products</label>
+        <div class="products" id="products">
+          <span class="check"><input type="checkbox" value="MetaDefender Kiosk" checked> MetaDefender Kiosk</span>
+          <span class="check"><input type="checkbox" value="MetaDefender Core" checked> MetaDefender Core</span>
+          <span class="check"><input type="checkbox" value="MetaDefender Managed File Transfer" checked> MetaDefender MFT</span>
+          <span class="check"><input type="checkbox" value="OPSWAT Data Diode"> Data Diode</span>
+          <span class="check"><input type="checkbox" value="MetaDefender Media Firewall"> Media Firewall</span>
+          <span class="check"><input type="checkbox" value="MetaDefender Drive"> MetaDefender Drive</span>
+          <span class="check"><input type="checkbox" value="MetaDefender Email Security"> Email Security</span>
+          <span class="check"><input type="checkbox" value="MetaDefender Storage Security"> Storage Security</span>
+        </div>
+
+        <label>Diagram options</label>
+        <div class="toggles">
+          <span class="check"><input id="scope" type="checkbox" checked> OPSWAT scope</span>
+          <span class="check"><input id="show-lanes" type="checkbox" checked> Show lanes</span>
+          <span class="check"><input id="quarantine" type="checkbox"> Quarantine path</span>
+          <span class="check"><input id="air-gap" type="checkbox"> Air gap</span>
+          <span class="check"><input id="outside-sync" type="checkbox" checked> Outside-scope sync</span>
+          <span class="check"><input id="purdue" type="checkbox"> Purdue levels</span>
+        </div>
+
+        <label for="extra">Extra instructions</label>
+        <textarea id="extra" placeholder="Optional">Keep normal left-to-right arrows straight. Keep labels below OPSWAT product icons.</textarea>
+
+        <div class="actions">
+          <button class="secondary" type="button" id="build">Build Prompt</button>
+          <button class="primary" type="submit" id="generate">Generate Diagram</button>
+        </div>
+        <div id="status" class="status"></div>
+      </form>
+    </section>
+
+    <section class="preview">
+      <div class="output-grid">
+        <div id="warnings" class="warnings"></div>
+        <div class="box">
+          <p class="section-title">Generated Prompt</p>
+          <pre id="prompt">Build a prompt to preview it here.</pre>
+        </div>
+        <div>
+          <p class="section-title">Diagram Preview</p>
+          <iframe id="diagram" class="diagram-frame" title="Generated diagram preview"></iframe>
+          <div id="links" class="result-links"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function lines(id) {
+      return $(id).value.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+    }
+
+    function selectedProducts() {
+      return Array.from(document.querySelectorAll("#products input:checked")).map((box) => box.value);
+    }
+
+    function payload() {
+      return {
+        title: $("title").value.trim(),
+        account_name: $("account").value.trim(),
+        use_case: $("use-case").value.trim(),
+        lanes: lines("lanes"),
+        flow_steps: lines("flow"),
+        products: selectedProducts(),
+        show_opswat_scope: $("scope").checked,
+        show_lanes: $("show-lanes").checked,
+        show_quarantine: $("quarantine").checked,
+        show_air_gap: $("air-gap").checked,
+        show_outside_scope_sync: $("outside-sync").checked,
+        include_purdue: $("purdue").checked,
+        extra_instructions: $("extra").value.trim(),
+        mode: $("mode").value,
+        include_svg: false
+      };
+    }
+
+    function setBusy(isBusy) {
+      $("build").disabled = isBusy;
+      $("generate").disabled = isBusy;
+      $("status").textContent = isBusy ? "Working..." : "";
+      $("status").className = "status";
+    }
+
+    function showWarnings(warnings) {
+      const box = $("warnings");
+      if (!warnings || warnings.length === 0) {
+        box.style.display = "none";
+        box.textContent = "";
+        return;
+      }
+      box.style.display = "block";
+      box.textContent = warnings.join(" ");
+    }
+
+    async function buildPrompt() {
+      setBusy(true);
+      try {
+        const response = await fetch("/api/prompt-helper", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload())
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not build prompt");
+        $("prompt").textContent = data.prompt;
+        showWarnings(data.warnings);
+        $("status").textContent = "Prompt ready.";
+        $("status").className = "status ok";
+        return data;
+      } catch (error) {
+        $("status").textContent = error.message;
+        $("status").className = "status error";
+        throw error;
+      } finally {
+        $("build").disabled = false;
+        $("generate").disabled = false;
+      }
+    }
+
+    async function generateDiagram(event) {
+      event.preventDefault();
+      setBusy(true);
+      try {
+        const response = await fetch("/api/diagrams/from-helper", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload())
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.detail || "Could not generate diagram");
+        $("prompt").textContent = data.helper_prompt;
+        showWarnings(data.helper_warnings);
+        const diagram = $("diagram");
+        diagram.src = data.svg_url;
+        diagram.style.display = "block";
+        $("links").style.display = "flex";
+        $("links").innerHTML = `<a href="${data.svg_url}" target="_blank" rel="noreferrer">Open SVG</a><a href="${data.json_url}" target="_blank" rel="noreferrer">Open JSON</a>`;
+        $("status").textContent = "Diagram generated.";
+        $("status").className = "status ok";
+      } catch (error) {
+        $("status").textContent = error.message;
+        $("status").className = "status error";
+      } finally {
+        $("build").disabled = false;
+        $("generate").disabled = false;
+      }
+    }
+
+    $("build").addEventListener("click", buildPrompt);
+    $("helper-form").addEventListener("submit", generateDiagram);
+    buildPrompt();
+  </script>
+</body>
+</html>

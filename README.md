@@ -8,6 +8,8 @@ The service returns SVG first because SVG is easy to preview in a browser, embed
 
 - `POST /api/diagrams` accepts an existing structured diagram payload.
 - `POST /api/diagrams/from-text` accepts a plain-text use case and generates a diagram payload.
+- `POST /api/prompt-helper` turns lightweight form fields into a strong reusable prompt.
+- `POST /api/diagrams/from-helper` builds the prompt and generates the diagram in one call.
 - `POST /api/diagrams/from-file` accepts an uploaded UTF-8 `.txt` use-case file.
 - `GET /api/diagrams/{id}.svg` returns the generated SVG.
 - `GET /api/diagrams/{id}.json` returns the normalized diagram spec.
@@ -44,12 +46,46 @@ Open:
 http://127.0.0.1:8020/docs
 ```
 
+For the lightweight prompt helper UI, open:
+
+```text
+http://127.0.0.1:8020/helper
+```
+
 ## Plain Text Example
 
 ```bash
 curl -s -X POST http://127.0.0.1:8020/api/diagrams/from-text \
   -H "Content-Type: application/json" \
   -d @examples/from_text.json
+```
+
+## Prompt Helper Example
+
+```bash
+curl -s -X POST http://127.0.0.1:8020/api/prompt-helper \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Use Case 1 - Secure USB Ingest to NAS",
+    "use_case": "Engineers bring USB removable media into two sites. Files must be scanned by MetaDefender Kiosk and MetaDefender Core before clean files are moved through MetaDefender Managed File Transfer to each site NAS.",
+    "lanes": ["London MSOC", "IBC"],
+    "flow_steps": [
+      "USB Device / Removable Media",
+      "MetaDefender Kiosk",
+      "MetaDefender Core",
+      "Clean verdict",
+      "MetaDefender Managed File Transfer",
+      "Site NAS"
+    ],
+    "products": [
+      "MetaDefender Kiosk",
+      "MetaDefender Core",
+      "MetaDefender Managed File Transfer"
+    ],
+    "show_opswat_scope": true,
+    "show_lanes": true,
+    "show_outside_scope_sync": true
+  }'
 ```
 
 Two-zone example:
