@@ -73,7 +73,7 @@ class DiagramTextRequest(BaseModel):
     title: str = Field(default="", max_length=180)
     model: Optional[str] = Field(default=None, max_length=120)
     mode: Literal["auto", "claude", "heuristic"] = "auto"
-    include_purdue: bool = True
+    include_purdue: bool = False
     include_svg: bool = False
 
 
@@ -131,16 +131,88 @@ def infer_title(description: str, supplied_title: str) -> str:
     return "Secure data flow use case"
 
 
+def wants_quarantine(description: str) -> bool:
+    text = description.lower()
+    return any(word in text for word in ["quarantine", "blocked", "malicious", "reject", "rejected", "threat", "infected"])
+
+
+def infer_zones(description: str) -> list[dict[str, Any]]:
+    text = description.lower()
+    if "two zone" in text or ("it side" in text and "ot side" in text):
+        return [
+            {"rank": 0, "label": "IT SIDE", "x": 60, "y": 150, "width": 610, "height": 440, "color": "#2563EB"},
+            {"rank": 1, "label": "OT SIDE", "x": 700, "y": 150, "width": 500, "height": 440, "color": "#16A34A"},
+        ]
+    if "low side" in text and ("high side" in text or "high-side" in text):
+        return [
+            {"rank": 0, "label": "LOW SIDE", "x": 60, "y": 150, "width": 610, "height": 440, "color": "#16A34A"},
+            {"rank": 1, "label": "HIGH SIDE", "x": 700, "y": 150, "width": 500, "height": 440, "color": "#E8842A"},
+        ]
+    return []
+
+
+def build_simple_flow_payload(request: DiagramTextRequest, products: list[dict[str, str]], title: str) -> dict[str, Any]:
+    description = request.description.strip()
+    zones = infer_zones(description)
+    has_quarantine = wants_quarantine(description)
+    destination_label = "High-side\nMFT" if ("high side" in description.lower() or "high-side" in description.lower()) else "Destination\nMFT"
+    if "nas" in description.lower():
+        destination_label = "NAS /\nStorage"
+
+    nodes: list[dict[str, Any]] = [
+        {"id": "source", "label": "USB Device /\nRemovable Media", "kind": "source", "x": 110, "y": 330},
+        {"id": "kiosk", "label": "Kiosk", "kind": "product", "product_type": "kiosk", "x": 310, "y": 315, "variant": "active"},
+        {"id": "core", "label": "Core", "kind": "product", "product_type": "core", "x": 310, "y": 425, "variant": "active"},
+        {"id": "verdict", "label": "Clean\nVerdict", "kind": "verdict", "x": 545, "y": 320},
+        {"id": "mft", "label": "MFT", "kind": "product", "product_type": "mft", "x": 790, "y": 315, "variant": "active"},
+        {"id": "destination", "label": destination_label, "kind": "entity", "icon": "server-rack", "x": 1015, "y": 318},
+    ]
+    flows: list[dict[str, Any]] = [
+        {"from": "source", "to": "kiosk", "role": "ingress", "label": "scan media", "glyph": "media_red"},
+        {"from": "kiosk", "to": "core", "role": "primary", "label": "scan", "sync": True},
+        {"from": "core", "to": "verdict", "role": "egress", "label": "approved", "glyph": "file_green"},
+        {"from": "verdict", "to": "mft", "role": "egress", "label": "copy clean file", "glyph": "file_green"},
+        {"from": "mft", "to": "destination", "role": "primary", "label": "deliver"},
+    ]
+    if has_quarantine:
+        nodes.append({"id": "quarantine", "label": "Quarantine", "kind": "quarantine", "x": 525, "y": 450})
+        flows.append({"from": "core", "to": "quarantine", "role": "ingress", "label": "blocked", "indicator": "quarantine"})
+
+    return {
+        "title": title,
+        "subtitle": "SECURING THE FLOW OF DATA",
+        "account_name": request.account_name,
+        "pattern": "custom",
+        "include_purdue": request.include_purdue,
+        "include_quarantine": has_quarantine,
+        "zones": zones,
+        "nodes": nodes,
+        "flows": flows,
+        "use_case": {
+            "title": title,
+            "account_trigger": description[:900],
+            "business_value": description[:900],
+            "opswat_products": products,
+        },
+        "products": products,
+    }
+
+
 def heuristic_payload(request: DiagramTextRequest) -> dict[str, Any]:
     description = request.description.strip()
     products = detected_products(description)
     title = infer_title(description, request.title)
+    text = description.lower()
+    if ("kiosk" in text and "core" in text and "mft" in text) or infer_zones(description):
+        return build_simple_flow_payload(request, products, title)
     return {
         "title": title,
         "subtitle": "SECURING THE FLOW OF DATA",
         "account_name": request.account_name,
         "pattern": "auto",
         "include_purdue": request.include_purdue,
+        "include_quarantine": wants_quarantine(description),
+        "zones": infer_zones(description),
         "use_case": {
             "title": title,
             "account_trigger": description[:900],
@@ -166,7 +238,7 @@ def claude_payload(request: DiagramTextRequest) -> dict[str, Any]:
         "account_name": request.account_name,
         "title_hint": request.title,
         "description": request.description,
-        "allowed_patterns": ["auto", "removable_media", "secure_file_exchange", "cross_domain"],
+        "allowed_patterns": ["auto", "custom", "removable_media", "secure_file_exchange", "cross_domain"],
         "preferred_products": [
             "MetaDefender Kiosk",
             "MetaDefender Core",
@@ -182,11 +254,13 @@ def claude_payload(request: DiagramTextRequest) -> dict[str, Any]:
         max_tokens=2500,
         temperature=0.1,
         system=(
-            "You convert plain-English industrial cybersecurity use cases into a "
-            "compact JSON payload for an OPSWAT SVG diagram generator. Return only "
-            "valid JSON. Do not invent unavailable OPSWAT product names. Prefer "
-            "products explicitly mentioned in the text, then infer only obvious "
-            "OPSWAT products from the use case."
+            "You convert plain-English industrial cybersecurity use cases into a compact JSON payload "
+            "for an OPSWAT SVG diagram generator. Return only valid JSON. Do not invent unavailable "
+            "OPSWAT product names. Prefer products explicitly mentioned in the text, then infer only "
+            "obvious OPSWAT products from the use case. Do not force Purdue zones, four-zone models, "
+            "or quarantine paths unless the user asks for them or the text clearly discusses malicious "
+            "files being blocked. If the user defines two zones, return exactly those two zones. For "
+            "simple use cases, prefer pattern=custom with explicit nodes and flows."
         ),
         messages=[
             {
@@ -197,8 +271,12 @@ def claude_payload(request: DiagramTextRequest) -> dict[str, Any]:
                     '  "title": "short diagram title",\n'
                     '  "subtitle": "SECURING THE FLOW OF DATA",\n'
                     '  "account_name": "optional account name",\n'
-                    '  "pattern": "auto|removable_media|secure_file_exchange|cross_domain",\n'
-                    '  "include_purdue": true,\n'
+                    '  "pattern": "auto|custom|removable_media|secure_file_exchange|cross_domain",\n'
+                    '  "include_purdue": false,\n'
+                    '  "include_quarantine": false,\n'
+                    '  "zones": [{"label": "IT SIDE", "x": 60, "y": 150, "width": 610, "height": 440, "color": "#2563EB"}],\n'
+                    '  "nodes": [{"id": "kiosk", "label": "Kiosk", "kind": "product", "product_type": "kiosk", "x": 310, "y": 315, "variant": "active"}],\n'
+                    '  "flows": [{"from": "kiosk", "to": "core", "role": "primary", "label": "scan"}],\n'
                     '  "use_case": {\n'
                     '    "title": "use case title",\n'
                     '    "account_trigger": "why this matters",\n'
@@ -217,6 +295,7 @@ def claude_payload(request: DiagramTextRequest) -> dict[str, Any]:
     payload.setdefault("subtitle", "SECURING THE FLOW OF DATA")
     payload.setdefault("pattern", "auto")
     payload["include_purdue"] = request.include_purdue
+    payload.setdefault("include_quarantine", False)
     if request.account_name and not payload.get("account_name"):
         payload["account_name"] = request.account_name
     return payload

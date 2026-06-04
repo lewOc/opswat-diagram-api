@@ -278,6 +278,31 @@ def infer_pattern(use_case: dict[str, Any], products: list[dict[str, Any]], requ
     return "secure_file_exchange"
 
 
+def use_case_text(use_case: dict[str, Any], products: list[dict[str, Any]]) -> str:
+    return " ".join(
+        [
+            str(use_case.get("title") or use_case.get("use_case") or ""),
+            str(use_case.get("account_trigger") or use_case.get("problem") or ""),
+            str(use_case.get("business_value") or use_case.get("overview") or ""),
+            " ".join(product["name"] for product in products),
+        ]
+    ).lower()
+
+
+def infer_quarantine(payload: dict[str, Any], use_case: dict[str, Any], products: list[dict[str, Any]]) -> bool:
+    if "include_quarantine" in payload:
+        return bool(payload.get("include_quarantine"))
+    text = use_case_text(use_case, products)
+    return any(word in text for word in ["quarantine", "blocked", "malicious", "reject", "rejected", "threat", "infected"])
+
+
+def normalize_zones(payload: dict[str, Any], include_purdue: bool) -> list[dict[str, Any]]:
+    if "zones" in payload:
+        zones = payload.get("zones")
+        return [zone for zone in zones if isinstance(zone, dict)] if isinstance(zones, list) else []
+    return ZONE_LABELS if include_purdue else []
+
+
 def build_spec(payload: dict[str, Any]) -> dict[str, Any]:
     use_case = payload.get("use_case") or {}
     if not isinstance(use_case, dict):
@@ -287,7 +312,8 @@ def build_spec(payload: dict[str, Any]) -> dict[str, Any]:
     account_name = payload.get("account_name") or payload.get("account") or payload.get("customer") or ""
     title = payload.get("title") or use_case.get("title") or use_case.get("use_case") or "A Day in the Life of a Data File"
     subtitle = payload.get("subtitle") or "SECURING THE FLOW OF DATA"
-    include_purdue = bool(payload.get("include_purdue", pattern in {"removable_media", "cross_domain", "secure_file_exchange"}))
+    include_purdue = bool(payload.get("include_purdue", False))
+    include_quarantine = infer_quarantine(payload, use_case, products)
 
     if not products:
         if pattern == "removable_media":
@@ -317,7 +343,6 @@ def build_spec(payload: dict[str, Any]) -> dict[str, Any]:
                 {"id": "media", "label": "External\nMedia", "kind": "source", "x": 150, "y": 438},
                 {"id": "kiosk", "label": product_by_type.get("kiosk", {"short": "Kiosk"})["short"], "kind": "product", "product_type": "kiosk", "x": 260, "y": 420, "variant": "active"},
                 {"id": "core", "label": product_by_type.get("core", {"short": "Core"})["short"], "kind": "product", "product_type": "core", "x": 480, "y": 360, "variant": "active"},
-                {"id": "quarantine", "label": "Quarantine", "kind": "quarantine", "x": 595, "y": 410},
                 {"id": "ot", "label": "OT Assets /\nSecure Zone", "kind": "zone", "x": 860, "y": 370},
             ]
         )
@@ -327,9 +352,11 @@ def build_spec(payload: dict[str, Any]) -> dict[str, Any]:
                 {"from": "media", "to": "kiosk", "role": "ingress", "label": "scan media", "glyph": "media_red"},
                 {"from": "kiosk", "to": "core", "role": "primary", "label": "inspect"},
                 {"from": "core", "to": "ot", "role": "egress", "label": "sanitized", "glyph": "file_green"},
-                {"from": "core", "to": "quarantine", "role": "ingress", "label": "blocked", "indicator": "quarantine"},
             ]
         )
+        if include_quarantine:
+            nodes.append({"id": "quarantine", "label": "Quarantine", "kind": "quarantine", "x": 595, "y": 410})
+            flows.append({"from": "core", "to": "quarantine", "role": "ingress", "label": "blocked", "indicator": "quarantine"})
         if any(product["type"] == "drive" for product in products):
             nodes.append({"id": "drive", "label": "Drive", "kind": "product", "product_type": "drive", "x": 260, "y": 300})
             flows.append({"from": "drive", "to": "core", "role": "primary", "label": "offline scan", "glyph": "media_red"})
@@ -371,10 +398,11 @@ def build_spec(payload: dict[str, Any]) -> dict[str, Any]:
                 {"from": "mft", "to": "core", "role": "primary", "label": "inspect", "sync": True},
                 {"from": "core", "to": "approved", "role": "egress", "label": "clean", "glyph": "file_green"},
                 {"from": "approved", "to": "secure", "role": "egress", "label": "deliver", "glyph": "file_green"},
-                {"from": "core", "to": "quarantine", "role": "ingress", "label": "blocked", "indicator": "quarantine"},
             ]
         )
-        nodes.append({"id": "quarantine", "label": "Quarantine", "kind": "quarantine", "x": 520, "y": 485})
+        if include_quarantine:
+            nodes.append({"id": "quarantine", "label": "Quarantine", "kind": "quarantine", "x": 520, "y": 485})
+            flows.append({"from": "core", "to": "quarantine", "role": "ingress", "label": "blocked", "indicator": "quarantine"})
 
     custom_nodes = payload.get("nodes")
     custom_flows = payload.get("flows")
@@ -392,7 +420,8 @@ def build_spec(payload: dict[str, Any]) -> dict[str, Any]:
         "account_name": account_name,
         "pattern": pattern,
         "include_purdue": include_purdue,
-        "zones": payload.get("zones") or ZONE_LABELS,
+        "include_quarantine": include_quarantine,
+        "zones": normalize_zones(payload, include_purdue),
         "products": products,
         "nodes": nodes,
         "flows": flows,
@@ -403,8 +432,56 @@ def build_spec(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def node_size(node: dict[str, Any]) -> tuple[int, int]:
+    if "width" in node and "height" in node:
+        return int(node["width"]), int(node["height"])
+    kind = node.get("kind", "process")
+    if kind == "product":
+        return 96, 68
+    if kind == "actor":
+        return 82, 64
+    if kind == "source":
+        return 82, 58
+    if kind == "zone":
+        return 160, 112
+    if kind == "quarantine":
+        return 112, 64
+    if kind == "verdict":
+        return 88, 74
+    if kind == "entity":
+        return 120, 92
+    return 96, 58
+
+
 def node_center(node: dict[str, Any]) -> tuple[int, int]:
-    return int(node["x"]) + 48, int(node["y"]) + 34
+    width, height = node_size(node)
+    return int(node["x"]) + width // 2, int(node["y"]) + height // 2
+
+
+def draw_multiline_text(x: int, y: int, value: Any, css_class: str, anchor: str = "middle", line_height: int = 13) -> str:
+    lines = str(value or "").split("\n")
+    return "\n".join(
+        f'<tspan x="{x}" dy="{0 if index == 0 else line_height}">{esc(line)}</tspan>' for index, line in enumerate(lines)
+    ).join([f'<text x="{x}" y="{y}" text-anchor="{anchor}" class="{css_class}">', "</text>"])
+
+
+def draw_zone_guide(zone: dict[str, Any], zone_top: int) -> str:
+    label = esc(zone.get("label", ""))
+    color = esc(zone.get("color") or THEME["near_black"])
+    if "width" in zone and "height" in zone:
+        x = int(zone.get("x", 0))
+        y = int(zone.get("y", zone_top))
+        width = int(zone.get("width", 220))
+        height = int(zone.get("height", 430))
+        return f"""
+          <rect x="{x}" y="{y}" width="{width}" height="{height}" rx="10" class="zone-container"/>
+          <text x="{x+24}" y="{y+32}" class="zone-title" fill="{color}">{label}</text>
+        """
+    x = int(zone.get("x", 0))
+    return f"""
+      <line x1="{x}" y1="{zone_top}" x2="{x}" y2="650" class="zone-line"/>
+      <text x="{x+6}" y="{zone_top+10}" class="zone-label" fill="{color}">{label}</text>
+    """
 
 
 def draw_generated_icon(product_type_value: str, x: int, y: int) -> str:
@@ -518,6 +595,24 @@ def draw_node(node: dict[str, Any]) -> str:
             <rect x="96" width="28" height="24" class="mini-box"/><text x="110" y="39" text-anchor="middle" class="tiny">GUI</text>
           </g>
         """
+    if kind == "entity":
+        icon_kind = node.get("icon", "server-rack")
+        return f"""
+          <rect x="{x}" y="{y}" width="120" height="92" rx="6" class="source-box"/>
+          {draw_line_icon(icon_kind, x + 45, y + 16)}
+          {draw_multiline_text(x + 60, y + 70, node.get("label", ""), "tiny")}
+        """
+    if kind == "verdict":
+        verdict_label = node.get("label") or "Clean\nVerdict"
+        return f"""
+          <g transform="translate({x},{y})">
+            <path d="M16 0 h34 l18 18 v42 h-52 z" fill="#FFFFFF" stroke="#0B1A44" stroke-width="1.3"/>
+            <path d="M50 0 v18 h18" fill="none" stroke="#0B1A44" stroke-width="1.3"/>
+            <circle cx="48" cy="39" r="14" fill="#FFFFFF" stroke="{THEME["blue"]}" stroke-width="2"/>
+            <path d="M41 39 l5 5 10-12" fill="none" stroke="{THEME["blue"]}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </g>
+          {draw_multiline_text(x + 44, y + 72, verdict_label, "tiny")}
+        """
     if kind == "quarantine":
         return f"""
           <rect x="{x}" y="{y}" width="112" height="64" rx="6" class="process-box"/>
@@ -590,11 +685,7 @@ def render_svg(spec: dict[str, Any]) -> str:
     zone_top = guide_y + 18
     zone_lines = []
     for zone in zones:
-        x = int(zone.get("x", 0))
-        label = esc(zone.get("label", ""))
-        color = esc(zone.get("color") or THEME["near_black"])
-        zone_lines.append(f'<line x1="{x}" y1="{zone_top}" x2="{x}" y2="650" class="zone-line"/>')
-        zone_lines.append(f'<text x="{x+6}" y="{zone_top+10}" class="zone-label" fill="{color}">{label}</text>')
+        zone_lines.append(draw_zone_guide(zone, zone_top))
 
     purdue = ""
     if spec.get("include_purdue"):
@@ -636,6 +727,8 @@ def render_svg(spec: dict[str, Any]) -> str:
       .account {{ font-size: 14px; font-weight: 700; fill: {THEME["ink"]}; }}
       .zone-label {{ font-size: 10.5px; font-weight: 800; letter-spacing: 0; }}
       .zone-line {{ stroke: {THEME["line"]}; stroke-width: 1; stroke-dasharray: 4 4; }}
+      .zone-container {{ fill: #FFFFFF; stroke: #9AA7B8; stroke-width: 1; stroke-dasharray: 8 6; opacity: 0.72; }}
+      .zone-title {{ font-size: 16px; font-weight: 800; letter-spacing: 0; }}
       .purdue-line {{ stroke: {THEME["line"]}; stroke-width: 1; }}
       .purdue-label {{ font-size: 9px; fill: {THEME["muted"]}; }}
       .purdue-label.green {{ fill: {THEME["zone_green"]}; }}

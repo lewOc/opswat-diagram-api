@@ -14,6 +14,14 @@ The service returns SVG first because SVG is easy to preview in a browser, embed
 
 When `ANTHROPIC_API_KEY` is configured, the text endpoint uses Claude to interpret the use case. If it is not configured, `mode=auto` falls back to a deterministic heuristic parser so the service still works for testing.
 
+The generator is intentionally flexible:
+
+- It does not force Purdue or four-zone models by default.
+- If a prompt defines two zones, such as `IT Side` and `OT Side`, it returns those two zones.
+- If no zones are requested, the spec can contain no zone guides.
+- Quarantine paths are included only when the prompt mentions blocking, malicious files, rejected files, threats, or quarantine.
+- Claude can return explicit `nodes`, `flows`, and `zones` for bespoke layouts.
+
 ## Setup
 
 ```bash
@@ -42,6 +50,19 @@ http://127.0.0.1:8020/docs
 curl -s -X POST http://127.0.0.1:8020/api/diagrams/from-text \
   -H "Content-Type: application/json" \
   -d @examples/from_text.json
+```
+
+Two-zone example:
+
+```bash
+curl -s -X POST http://127.0.0.1:8020/api/diagrams/from-text \
+  -H "Content-Type: application/json" \
+  -d '{
+    "account_name": "Example Account",
+    "title": "Low-side media scanning to high-side MFT",
+    "mode": "auto",
+    "description": "Generate a diagram showing a Low Side MDKIOSK that scans files with MDCORE and if approved, copies them to a high-side MFT. The diagram shows two zones, IT side and OT side."
+  }'
 ```
 
 ## File Upload Example
