@@ -8,10 +8,12 @@ descriptions into OPSWAT-style SVG diagrams.
 from __future__ import annotations
 
 import importlib.util
+import base64
 import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, Optional
 
@@ -41,9 +43,14 @@ def project_path_from_env(name: str, default: Path) -> Path:
 
 
 DIAGRAM_OUTPUT_DIR = project_path_from_env("DIAGRAM_OUTPUT_DIR", PROJECT / "outputs" / "diagrams")
+IMAGE_OUTPUT_DIR = project_path_from_env("IMAGE_OUTPUT_DIR", PROJECT / "outputs" / "image_diagrams")
 DIAGRAM_SCRIPT = PROJECT / "scripts" / "diagram_generator.py"
 STATIC_DIR = PROJECT / "static"
+REFERENCE_DIAGRAM_DIR = project_path_from_env("REFERENCE_DIAGRAM_DIR", PROJECT / "assets" / "references" / "diagrams")
+PRODUCT_ICON_DIR = project_path_from_env("PRODUCT_ICON_DIR", PROJECT / "assets" / "product_icons")
 DEFAULT_MODEL = os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-8")
+DEFAULT_IMAGE_MODEL = os.environ.get("OPENAI_IMAGE_MODEL", "gpt-image-1.5")
+SUPPORTED_IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
 
 
 def load_diagram_module() -> Any:
@@ -95,6 +102,20 @@ class PromptHelperRequest(BaseModel):
     mode: Literal["auto", "claude", "heuristic"] = "auto"
     model: Optional[str] = Field(default=None, max_length=120)
     include_svg: bool = False
+
+
+class ImageDiagramRequest(BaseModel):
+    prompt: str = Field(..., min_length=20, max_length=32000)
+    title: str = Field(default="OPSWAT image diagram", max_length=180)
+    account_name: str = Field(default="", max_length=200)
+    model: Optional[str] = Field(default=None, max_length=120)
+    size: Literal["1024x1024", "1536x1024", "1024x1536"] = "1536x1024"
+    quality: Literal["low", "medium", "high", "auto"] = "high"
+    output_format: Literal["png", "jpeg", "webp"] = "png"
+    include_reference_diagrams: bool = True
+    include_product_icons: bool = True
+    max_reference_diagrams: int = Field(default=8, ge=0, le=16)
+    max_product_icons: int = Field(default=8, ge=0, le=16)
 
 
 def clean_list(values: list[str], limit: int = 80) -> list[str]:
@@ -187,8 +208,154 @@ def helper_to_text_request(request: PromptHelperRequest) -> tuple[DiagramTextReq
     )
 
 
+def slugify(value: str) -> str:
+    slug = re.sub(r"[^a-zA-Z0-9]+", "-", value.lower()).strip("-")
+    return slug or "diagram"
+
+
+def image_asset_paths(directory: Path, limit: int) -> list[Path]:
+    if limit <= 0 or not directory.exists():
+        return []
+    paths = [
+        path
+        for path in sorted(directory.iterdir(), key=lambda item: item.name.lower())
+        if path.is_file() and path.suffix.lower() in SUPPORTED_IMAGE_SUFFIXES
+    ]
+    return paths[:limit]
+
+
+PRODUCT_ICON_RULES = [
+    (("media validation", "validation"), "mobile_validation.png"),
+    (("media firewall", "firewall"), "media_firewall.png"),
+    (("managed file transfer", "mft"), "managed_file_transfer_mft.png"),
+    (("kiosk",), "kiosk_tower.png"),
+    (("core", "scanning", "malware scan"), "on_premises.png"),
+    (("data diode", "diode"), "transfer_guard.png"),
+    (("drive",), "drive.png"),
+    (("email",), "email_Security.png"),
+    (("storage", "nas"), "secure_storage.png"),
+    (("ot device", "plc", "rtu", "hmi"), "ot_Security.png"),
+]
+
+
+def product_icon_reference_paths(prompt: str, limit: int) -> list[Path]:
+    if limit <= 0:
+        return []
+    text = prompt.lower()
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for keywords, filename in PRODUCT_ICON_RULES:
+        if not any(keyword in text for keyword in keywords):
+            continue
+        path = PRODUCT_ICON_DIR / filename
+        if path.exists() and path not in seen:
+            paths.append(path)
+            seen.add(path)
+        if len(paths) >= limit:
+            break
+    return paths
+
+
+def build_image_generation_prompt(request: ImageDiagramRequest, reference_paths: list[Path], icon_paths: list[Path]) -> str:
+    reference_names = "\n".join(f"- {path.name}" for path in reference_paths) or "- None"
+    icon_names = "\n".join(f"- {path.name}" for path in icon_paths) or "- None"
+    account = f"\nAccount/project context: {request.account_name.strip()}" if request.account_name.strip() else ""
+    return f"""Create a polished OPSWAT-style light technical architecture diagram.
+
+Title: {request.title.strip()}{account}
+
+Use the attached manual diagrams as visual style references. Match their clean white background, dark navy linework, OPSWAT blue product treatments, balanced spacing, readable labels, and sales-engineering architecture style.
+
+Reference diagrams attached:
+{reference_names}
+
+Product/icon references attached:
+{icon_names}
+
+Diagram brief:
+{request.prompt.strip()}
+
+Hard requirements:
+- Keep all labels legible and correctly spelled.
+- Use real OPSWAT product names exactly as provided in the brief.
+- Prefer straight thin navy arrows for left-to-right flow.
+- Use restrained right-angle connectors only where split/merge routing is necessary.
+- Use white cards for external people, media, and destinations.
+- Use the attached OPSWAT product icon references where relevant; do not invent unrelated product icons.
+- Do not add threat, quarantine, malware, or blocked-file paths unless explicitly requested.
+- Produce one complete presentation-ready diagram, not a collage of the references.
+"""
+
+
+def create_image_diagram(request: ImageDiagramRequest) -> dict[str, Any]:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+    try:
+        from openai import OpenAI
+    except ImportError as exc:
+        raise RuntimeError("The openai package is not installed. Run .venv/bin/pip install -r requirements.txt") from exc
+
+    reference_paths = image_asset_paths(REFERENCE_DIAGRAM_DIR, request.max_reference_diagrams) if request.include_reference_diagrams else []
+    remaining_slots = max(0, 16 - len(reference_paths))
+    icon_limit = min(request.max_product_icons, remaining_slots)
+    icon_paths = product_icon_reference_paths(request.prompt, icon_limit) if request.include_product_icons else []
+    image_paths = reference_paths + icon_paths
+    if not image_paths:
+        raise RuntimeError(f"No reference images found in {REFERENCE_DIAGRAM_DIR}")
+
+    client = OpenAI(api_key=api_key)
+    prompt = build_image_generation_prompt(request, reference_paths, icon_paths)
+    opened_files = [path.open("rb") for path in image_paths]
+    try:
+        result = client.images.edit(
+            model=request.model or DEFAULT_IMAGE_MODEL,
+            image=opened_files,
+            prompt=prompt,
+            size=request.size,
+            quality=request.quality,
+            output_format=request.output_format,
+            n=1,
+        )
+    finally:
+        for file_handle in opened_files:
+            file_handle.close()
+
+    data = result.data[0]
+    encoded = getattr(data, "b64_json", None)
+    if not encoded:
+        raise RuntimeError("OpenAI image response did not include b64_json")
+    image_bytes = base64.b64decode(encoded)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    diagram_id = f"{slugify(request.title)}-{stamp}"
+    IMAGE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    image_path = IMAGE_OUTPUT_DIR / f"{diagram_id}.{request.output_format}"
+    metadata_path = IMAGE_OUTPUT_DIR / f"{diagram_id}.json"
+    image_path.write_bytes(image_bytes)
+    metadata = {
+        "id": diagram_id,
+        "model": request.model or DEFAULT_IMAGE_MODEL,
+        "size": request.size,
+        "quality": request.quality,
+        "output_format": request.output_format,
+        "prompt": prompt,
+        "reference_diagrams": [path.name for path in reference_paths],
+        "product_icons": [path.name for path in icon_paths],
+    }
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return {
+        **metadata,
+        "image_url": f"/api/image-diagrams/{image_path.name}",
+        "json_url": f"/api/image-diagrams/{metadata_path.name}",
+    }
+
+
 def safe_filename(filename: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9_.-]+\.(svg|json)", filename))
+
+
+def safe_image_filename(filename: str) -> bool:
+    return bool(re.fullmatch(r"[A-Za-z0-9_.-]+\.(png|jpg|jpeg|webp|json)", filename))
 
 
 def read_json_from_model(text: str) -> dict[str, Any]:
@@ -473,6 +640,7 @@ def root() -> dict[str, Any]:
         "docs": "/docs",
         "helper": "/helper",
         "health": "/api/health",
+        "image_references": "/api/image-diagrams/references",
     }
 
 
@@ -489,8 +657,12 @@ def health() -> dict[str, Any]:
     return {
         "ok": True,
         "model": DEFAULT_MODEL,
+        "image_model": DEFAULT_IMAGE_MODEL,
         "anthropic_configured": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "openai_configured": bool(os.environ.get("OPENAI_API_KEY")),
         "outputs": str(DIAGRAM_OUTPUT_DIR),
+        "image_outputs": str(IMAGE_OUTPUT_DIR),
+        "reference_diagrams": str(REFERENCE_DIAGRAM_DIR),
     }
 
 
@@ -523,6 +695,29 @@ async def generate_diagram_from_helper(payload: PromptHelperRequest) -> dict[str
     result["helper_prompt"] = prompt
     result["helper_warnings"] = warnings
     return result
+
+
+@app.get("/api/image-diagrams/references")
+def list_image_references() -> dict[str, Any]:
+    diagrams = image_asset_paths(REFERENCE_DIAGRAM_DIR, 100)
+    return {
+        "reference_dir": str(REFERENCE_DIAGRAM_DIR),
+        "references": [
+            {
+                "filename": path.name,
+                "size_bytes": path.stat().st_size,
+            }
+            for path in diagrams
+        ],
+    }
+
+
+@app.post("/api/image-diagrams/from-text")
+async def generate_image_diagram_from_text(payload: ImageDiagramRequest) -> dict[str, Any]:
+    try:
+        return await run_in_threadpool(create_image_diagram, payload)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
 @app.post("/api/diagrams")
@@ -583,3 +778,21 @@ def get_diagram(filename: str) -> FileResponse:
     if filename.endswith(".svg"):
         return FileResponse(path, media_type="image/svg+xml")
     return FileResponse(path, media_type="application/json")
+
+
+@app.get("/api/image-diagrams/{filename}")
+def get_image_diagram(filename: str) -> FileResponse:
+    if not safe_image_filename(filename):
+        raise HTTPException(status_code=404, detail="Image diagram not found")
+    path = IMAGE_OUTPUT_DIR / filename
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Image diagram not found")
+    if filename.endswith(".json"):
+        return FileResponse(path, media_type="application/json")
+    media_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+    }.get(path.suffix.lower(), "application/octet-stream")
+    return FileResponse(path, media_type=media_type)

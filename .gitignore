@@ -13,5 +13,8 @@ outputs/*
 !outputs/diagrams/
 outputs/diagrams/*
 !outputs/diagrams/.gitkeep
+!outputs/image_diagrams/
+outputs/image_diagrams/*
+!outputs/image_diagrams/.gitkeep
 work/*
 !work/.gitkeep

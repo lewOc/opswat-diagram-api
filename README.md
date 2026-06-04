@@ -10,6 +10,8 @@ The service returns SVG first because SVG is easy to preview in a browser, embed
 - `POST /api/diagrams/from-text` accepts a plain-text use case and generates a diagram payload.
 - `POST /api/prompt-helper` turns lightweight form fields into a strong reusable prompt.
 - `POST /api/diagrams/from-helper` builds the prompt and generates the diagram in one call.
+- `POST /api/image-diagrams/from-text` experimentally generates a PNG diagram with OpenAI image generation, always attaching local reference diagrams by default.
+- `GET /api/image-diagrams/references` lists the reference diagrams that will be attached to image-generation prompts.
 - `POST /api/diagrams/from-file` accepts an uploaded UTF-8 `.txt` use-case file.
 - `GET /api/diagrams/{id}.svg` returns the generated SVG.
 - `GET /api/diagrams/{id}.json` returns the normalized diagram spec.
@@ -33,6 +35,8 @@ cp .env.example .env
 ```
 
 Set `ANTHROPIC_API_KEY` in `.env` for Claude-supported text interpretation.
+
+Set `OPENAI_API_KEY` in `.env` for the experimental image-generation renderer.
 
 ## Run
 
@@ -86,6 +90,41 @@ curl -s -X POST http://127.0.0.1:8020/api/prompt-helper \
     "show_lanes": true,
     "show_outside_scope_sync": true
   }'
+```
+
+## Experimental Image Renderer
+
+Reference diagrams are loaded from:
+
+```text
+assets/references/diagrams
+```
+
+The image renderer automatically attaches those reference diagrams to every image-generation request, then adds relevant product icon references when the prompt mentions products such as Kiosk, Core, MFT, Media Firewall, or Media Validation.
+
+List available references:
+
+```bash
+curl -s http://127.0.0.1:8020/api/image-diagrams/references
+```
+
+Generate a PNG concept render:
+
+```bash
+curl -s -X POST http://127.0.0.1:8020/api/image-diagrams/from-text \
+  -H "Content-Type: application/json" \
+  -d '{
+    "title": "Vendor / OEM Media Release to OT",
+    "prompt": "Create an OPSWAT-style light technical architecture diagram showing a Vendor / OEM Engineer bringing USB / CD / Peripheral Media through MetaDefender Kiosk, MetaDefender Core, a Clean Verdict, an IT / OT AIRGAP, then either MetaDefender Media Firewall OR MetaDefender Media Validation before release to OT Devices (PLCs, RTUs, etc.). Match the attached reference diagram style closely.",
+    "size": "1536x1024",
+    "quality": "high"
+  }'
+```
+
+Generated PNGs and metadata are written to:
+
+```text
+outputs/image_diagrams
 ```
 
 Two-zone example:
