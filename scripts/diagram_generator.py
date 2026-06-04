@@ -507,6 +507,23 @@ def edge_point(bounds: tuple[int, int, int, int], toward: tuple[int, int]) -> tu
     return px, py
 
 
+def horizontal_edge_points(
+    source_bounds: tuple[int, int, int, int],
+    target_bounds: tuple[int, int, int, int],
+    preferred_y: int,
+) -> tuple[int, int, int] | None:
+    sx, sy, sw, sh = source_bounds
+    tx, ty, tw, th = target_bounds
+    overlap_top = max(sy + 8, ty + 8)
+    overlap_bottom = min(sy + sh - 8, ty + th - 8)
+    if overlap_top > overlap_bottom:
+        return None
+    y = clamp(preferred_y, overlap_top, overlap_bottom)
+    if sx <= tx:
+        return sx + sw, tx, y
+    return sx, tx + tw, y
+
+
 def draw_multiline_text(x: int, y: int, value: Any, css_class: str, anchor: str = "middle", line_height: int = 13) -> str:
     lines = str(value or "").split("\n")
     return "\n".join(
@@ -734,16 +751,13 @@ def draw_flow(flow: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> s
         and target.get("kind") == "product"
         and abs(source_center[0] - target_center[0]) < 80
     ):
-        top = min(source_bounds[1] + source_bounds[3], target_bounds[1] + target_bounds[3]) + 8
-        bottom = max(source_bounds[1], target_bounds[1]) - 8
-        if bottom <= top:
-            top = min(source_center[1], target_center[1]) + 18
-            bottom = max(source_center[1], target_center[1]) - 18
-        x1 = max(source_bounds[0] + source_bounds[2], target_bounds[0] + target_bounds[2]) + 8
-        x2 = x1 + 18
+        mid_x = min(source_bounds[0], target_bounds[0]) + 18
+        mid_y = (source_center[1] + target_center[1]) // 2
         return f"""
-          <path d="M {x1} {top} L {x1} {bottom}" fill="none" stroke="{color}" stroke-width="1.25" marker-end="url(#{marker_id})"/>
-          <path d="M {x2} {bottom} L {x2} {top}" fill="none" stroke="{color}" stroke-width="1.25" marker-end="url(#{marker_id})"/>
+          <g transform="translate({mid_x-12},{mid_y-12})">
+            <circle cx="12" cy="12" r="11" fill="#FFFFFF" stroke="{FLOW_ROLE_COLORS['sync']}" stroke-width="1.2"/>
+            <path d="M7 11 c1-5 8-6 11-2 l2 2 M17 13 c-1 5-8 6-11 2 l-2-2" fill="none" stroke="{FLOW_ROLE_COLORS['sync']}" stroke-width="1.45" stroke-linecap="round"/>
+          </g>
         """
     elif flow.get("route") == "side":
         sx = source_bounds[0] + source_bounds[2]
@@ -751,9 +765,25 @@ def draw_flow(flow: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> s
         tx = target_bounds[0] + target_bounds[2]
         ty = target_center[1]
         mid_x = max(sx, tx) + 24
+        path = f"M {sx} {sy} L {mid_x} {sy} L {mid_x} {ty} L {tx} {ty}"
+    elif abs(source_center[0] - target_center[0]) > 60:
+        preferred_y = source_center[1]
+        if target.get("kind") == "product":
+            preferred_y = target_center[1]
+        elif source.get("kind") == "product":
+            preferred_y = source_center[1]
+        horizontal = horizontal_edge_points(source_bounds, target_bounds, preferred_y)
+        if horizontal:
+            sx, tx, sy = horizontal
+            ty = sy
+            mid_x = (sx + tx) // 2
+            path = f"M {sx} {sy} L {tx} {ty}"
+        else:
+            mid_x = (sx + tx) // 2
+            path = f"M {sx} {sy} L {mid_x} {sy} L {mid_x} {ty} L {tx} {ty}"
     else:
         mid_x = (sx + tx) // 2
-    path = f"M {sx} {sy} L {mid_x} {sy} L {mid_x} {ty} L {tx} {ty}"
+        path = f"M {sx} {sy} L {mid_x} {sy} L {mid_x} {ty} L {tx} {ty}"
     label_y = sy - 8 if sy <= ty else ty - 8
     glyph = ""
     if flow.get("glyph"):
