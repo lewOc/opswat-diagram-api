@@ -254,7 +254,6 @@ def claude_payload(request: DiagramTextRequest) -> dict[str, Any]:
     response = client.messages.create(
         model=model,
         max_tokens=2500,
-        temperature=0.1,
         system=(
             "You convert plain-English industrial cybersecurity use cases into a compact JSON payload "
             "for an OPSWAT SVG diagram generator. Return only valid JSON. Do not invent unavailable "
