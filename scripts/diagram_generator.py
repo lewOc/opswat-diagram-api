@@ -40,6 +40,7 @@ THEME = {
     "orange": "#E8842A",
     "black_flow": "#111827",
     "line": "#CBD5E1",
+    "light_line": "#D8DEE8",
     "soft": "#F6F8FB",
     "inactive": "#E5E7EB",
     "inactive_text": "#9CA3AF",
@@ -311,7 +312,9 @@ def build_spec(payload: dict[str, Any]) -> dict[str, Any]:
     pattern = infer_pattern(use_case, products, payload.get("pattern"))
     account_name = payload.get("account_name") or payload.get("account") or payload.get("customer") or ""
     title = payload.get("title") or use_case.get("title") or use_case.get("use_case") or "A Day in the Life of a Data File"
-    subtitle = payload.get("subtitle") or "SECURING THE FLOW OF DATA"
+    subtitle = payload.get("subtitle") if "subtitle" in payload else "SECURING THE FLOW OF DATA"
+    if subtitle is None:
+        subtitle = ""
     include_purdue = bool(payload.get("include_purdue", False))
     include_quarantine = infer_quarantine(payload, use_case, products)
 
@@ -417,6 +420,8 @@ def build_spec(payload: dict[str, Any]) -> dict[str, Any]:
         "canvas": {"width": WIDTH, "height": HEIGHT},
         "title": truncate(title, 82),
         "subtitle": subtitle,
+        "title_color": payload.get("title_color") or THEME["ink"],
+        "figure_caption": payload.get("figure_caption"),
         "account_name": account_name,
         "pattern": pattern,
         "include_purdue": include_purdue,
@@ -437,7 +442,7 @@ def node_size(node: dict[str, Any]) -> tuple[int, int]:
         return int(node["width"]), int(node["height"])
     kind = node.get("kind", "process")
     if kind == "product":
-        return 96, 68
+        return 132, 118
     if kind == "actor":
         return 82, 64
     if kind == "source":
@@ -456,6 +461,42 @@ def node_size(node: dict[str, Any]) -> tuple[int, int]:
 def node_center(node: dict[str, Any]) -> tuple[int, int]:
     width, height = node_size(node)
     return int(node["x"]) + width // 2, int(node["y"]) + height // 2
+
+
+def clamp(value: int, minimum: int, maximum: int) -> int:
+    return max(minimum, min(maximum, value))
+
+
+def connection_bounds(node: dict[str, Any]) -> tuple[int, int, int, int]:
+    x = int(node["x"])
+    y = int(node["y"])
+    kind = node.get("kind", "process")
+    if kind == "product":
+        return x + 12, y, 108, 76
+    if kind == "verdict":
+        return x + 16, y, 52, 60
+    width, height = node_size(node)
+    return x, y, width, height
+
+
+def bounds_center(bounds: tuple[int, int, int, int]) -> tuple[int, int]:
+    x, y, width, height = bounds
+    return x + width // 2, y + height // 2
+
+
+def edge_point(bounds: tuple[int, int, int, int], toward: tuple[int, int]) -> tuple[int, int]:
+    x, y, width, height = bounds
+    cx, cy = bounds_center(bounds)
+    tx, ty = toward
+    dx = tx - cx
+    dy = ty - cy
+    if abs(dx) * height >= abs(dy) * width:
+        px = x + width if dx >= 0 else x
+        py = clamp(ty, y + 8, y + height - 8)
+        return px, py
+    py = y + height if dy >= 0 else y
+    px = clamp(tx, x + 8, x + width - 8)
+    return px, py
 
 
 def draw_multiline_text(x: int, y: int, value: Any, css_class: str, anchor: str = "middle", line_height: int = 13) -> str:
@@ -532,19 +573,33 @@ def draw_generated_icon(product_type_value: str, x: int, y: int) -> str:
     """
 
 
-def draw_product_icon(product_type_value: str, x: int, y: int, node_id: str) -> str:
+def draw_product_icon(product_type_value: str, x: int, y: int, node_id: str, width: int = 88, height: int = 72) -> str:
     uri = product_icon_uri(product_type_value)
     if not uri:
         return draw_generated_icon(product_type_value, x, y)
     clip_id = f"clip-{re.sub(r'[^a-zA-Z0-9_-]', '-', node_id)}"
-    filter_attr = ' filter="url(#kioskRed)"' if product_type_value == "kiosk" else ""
-    # The source PNGs include product captions underneath the artwork. Render
-    # them larger and clip to the upper art region so the diagram uses the
-    # official object art while keeping labels controlled by the diagram.
+    # Product PNGs include captions below the artwork. Crop to the official
+    # product art only, then render controlled SVG labels underneath.
     return f"""
-      <clipPath id="{clip_id}"><rect x="{x}" y="{y}" width="48" height="40" rx="2"/></clipPath>
-      <image href="{uri}" x="{x-20}" y="{y-6}" width="88" height="88" preserveAspectRatio="xMidYMin meet" clip-path="url(#{clip_id})"{filter_attr}/>
+      <clipPath id="{clip_id}"><rect x="{x}" y="{y}" width="{width}" height="{height}" rx="2"/></clipPath>
+      <image href="{uri}" x="{x-18}" y="{y-4}" width="{width+36}" height="{height+46}" preserveAspectRatio="xMidYMin meet" clip-path="url(#{clip_id})"/>
     """
+
+
+def product_caption(product_type_value: str, label: Any) -> tuple[str, str]:
+    text = str(label or "").strip()
+    captions = {
+        "kiosk": "Kiosk",
+        "core": "Core",
+        "mft": "Managed File\nTransfer",
+        "diode": "Data Diode",
+        "drive": "Drive",
+        "firewall": "Media Firewall",
+        "email": "Email Security",
+        "hmi": "HMI",
+        "product": text or "OPSWAT Product",
+    }
+    return "MetaDefender", captions.get(product_type_value, text or "OPSWAT Product")
 
 
 def draw_utility_icon(kind: str, x: int, y: int, size: int = 34) -> str:
@@ -579,20 +634,13 @@ def draw_node(node: dict[str, Any]) -> str:
     kind = node.get("kind", "process")
     if kind == "product":
         product_type_value = node.get("product_type", "product")
-        variant = node.get("variant", "default")
-        fill = THEME["active_blue"] if variant == "active" else THEME["navy"]
-        stroke = THEME["active_blue"] if variant == "active" else "#16243A"
-        glow = ""
-        if variant == "active":
-            glow = f'<rect x="{x-7}" y="{y-7}" width="110" height="82" rx="12" fill="none" stroke="{THEME["active_blue"]}" stroke-width="3" filter="url(#blueGlow)"/>'
-        if product_type_value == "kiosk":
-            fill = "#2A1010" if variant != "active" else "#1E6BFF"
-            stroke = THEME["kiosk_red"]
+        kicker, caption = product_caption(product_type_value, raw_label)
         return f"""
-          {glow}
-          <rect x="{x}" y="{y}" width="96" height="68" rx="10" fill="{fill}" stroke="{stroke}" stroke-width="1.5"/>
-          {draw_product_icon(product_type_value, x + 24, y + 8, node.get("id", "product"))}
-          <text x="{x+48}" y="{y+58}" text-anchor="middle" class="node-label light">{label}</text>
+          <g class="product-node">
+            {draw_product_icon(product_type_value, x + 22, y, node.get("id", "product"), 88, 72)}
+            <text x="{x+66}" y="{y+84}" text-anchor="middle" class="product-kicker">{esc(kicker)}</text>
+            {draw_multiline_text(x + 66, y + 101, wrap_label(caption, 16, 2), "product-caption", line_height=16)}
+          </g>
         """
     if kind == "actor":
         inactive = node.get("variant") == "inactive"
@@ -661,12 +709,23 @@ def draw_flow(flow: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> s
     target = nodes_by_id.get(flow["to"])
     if not source or not target:
         return ""
-    sx, sy = node_center(source)
-    tx, ty = node_center(target)
+    source_bounds = connection_bounds(source)
+    target_bounds = connection_bounds(target)
+    source_center = bounds_center(source_bounds)
+    target_center = bounds_center(target_bounds)
+    sx, sy = edge_point(source_bounds, target_center)
+    tx, ty = edge_point(target_bounds, source_center)
     color = flow_color(flow)
     marker_id = flow_marker_id(flow)
-    mid_x = (sx + tx) // 2
     label = esc(flow.get("label", ""))
+    if flow.get("route") == "side":
+        sx = source_bounds[0] + source_bounds[2]
+        sy = source_center[1]
+        tx = target_bounds[0] + target_bounds[2]
+        ty = target_center[1]
+        mid_x = max(sx, tx) + 24
+    else:
+        mid_x = (sx + tx) // 2
     path = f"M {sx} {sy} L {mid_x} {sy} L {mid_x} {ty} L {tx} {ty}"
     label_y = sy - 8 if sy <= ty else ty - 8
     glyph = ""
@@ -691,12 +750,14 @@ def draw_flow(flow: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> s
             <path d="M7 1 v12 M1 7 h12 M3 3 l8 8 M11 3 l-8 8" stroke="{THEME["red"]}" stroke-width="1.2"/>
           </g>
         """
+    marker_start = f' marker-start="url(#{marker_id})"' if flow.get("bidirectional") else ""
+    label_text = f'<text x="{mid_x}" y="{label_y}" text-anchor="middle" class="flow-label" fill="{color}">{label}</text>' if label else ""
     return f"""
-      <path d="{path}" fill="none" stroke="{color}" stroke-width="2" marker-end="url(#{marker_id})"/>
+      <path d="{path}" fill="none" stroke="{color}" stroke-width="2"{marker_start} marker-end="url(#{marker_id})"/>
       {glyph}
       {sync}
       {quarantine}
-      <text x="{mid_x}" y="{label_y}" text-anchor="middle" class="flow-label" fill="{color}">{label}</text>
+      {label_text}
     """
 
 
@@ -705,11 +766,14 @@ def render_svg(spec: dict[str, Any]) -> str:
     nodes = spec.get("nodes", [])
     nodes_by_id = {node["id"]: node for node in nodes}
     title_lines = wrap_words(spec.get("title"), 44, 2)
-    title_font = 34 if len(title_lines) == 1 else 28
+    subtitle = str(spec.get("subtitle") or "").strip()
+    title_font = 30 if not subtitle and len(title_lines) == 1 else 34 if len(title_lines) == 1 else 28
+    title_y = 54 if not subtitle else 72
+    title_color = esc(spec.get("title_color") or THEME["ink"])
     title_svg = "\n".join(
         f'<tspan x="16" dy="{0 if index == 0 else 36}">{esc(line)}</tspan>' for index, line in enumerate(title_lines)
     )
-    guide_y = 124 if len(title_lines) == 1 else 150
+    guide_y = 110 if not subtitle and len(title_lines) == 1 else 124 if len(title_lines) == 1 else 150
     zone_top = guide_y + 18
     zone_lines = []
     for zone in zones:
@@ -729,6 +793,13 @@ def render_svg(spec: dict[str, Any]) -> str:
     rendered_nodes = "\n".join(draw_node(node) for node in nodes)
     account = spec.get("account_name")
     account_text = f'<text x="1240" y="44" text-anchor="end" class="account">{esc(account)}</text>' if account else ""
+    subtitle_text = f'<text x="16" y="32" class="subtitle">{esc(subtitle)}</text>' if subtitle else ""
+    figure_caption = spec.get("figure_caption")
+    figure_text = (
+        f'<text x="{WIDTH // 2}" y="690" text-anchor="middle" class="figure-caption">{esc(figure_caption)}</text>'
+        if figure_caption
+        else ""
+    )
 
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{WIDTH}" height="{HEIGHT}" viewBox="0 0 {WIDTH} {HEIGHT}">
   <defs>
@@ -743,16 +814,17 @@ def render_svg(spec: dict[str, Any]) -> str:
     <filter id="kioskRed" color-interpolation-filters="sRGB">
       <feColorMatrix type="matrix" values="0.55 0.05 0.05 0 0.24  0.10 0.04 0.04 0 0.03  0.08 0.03 0.03 0 0.03  0 0 0 1 0"/>
     </filter>
-    <marker id="ingress-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["ingress"]}"/></marker>
-    <marker id="egress-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["egress"]}"/></marker>
-    <marker id="primary-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["primary"]}"/></marker>
-    <marker id="sync-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["sync"]}"/></marker>
+    <marker id="ingress-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto-start-reverse"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["ingress"]}"/></marker>
+    <marker id="egress-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto-start-reverse"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["egress"]}"/></marker>
+    <marker id="primary-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto-start-reverse"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["primary"]}"/></marker>
+    <marker id="sync-arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto-start-reverse"><path d="M0,0 L0,6 L9,3 z" fill="{FLOW_ROLE_COLORS["sync"]}"/></marker>
     <style>
       @font-face {{ font-family: 'Simplon Norm'; src: local('Simplon Norm'); }}
       svg {{ background: {THEME["white"]}; font-family: 'Simplon Norm', Arial, sans-serif; }}
       .subtitle {{ font-size: 17px; letter-spacing: 10px; fill: {THEME["blue"]}; }}
-      .title {{ font-size: {title_font}px; font-weight: 800; fill: {THEME["ink"]}; }}
+      .title {{ font-size: {title_font}px; font-weight: 600; fill: {title_color}; }}
       .account {{ font-size: 14px; font-weight: 700; fill: {THEME["ink"]}; }}
+      .figure-caption {{ font-size: 17px; font-style: italic; fill: {THEME["ink"]}; }}
       .zone-label {{ font-size: 10.5px; font-weight: 800; letter-spacing: 0; }}
       .zone-line {{ stroke: {THEME["line"]}; stroke-width: 1; stroke-dasharray: 4 4; }}
       .zone-container {{ fill: #FFFFFF; stroke: #9AA7B8; stroke-width: 1; stroke-dasharray: 8 6; opacity: 0.72; }}
@@ -769,6 +841,8 @@ def render_svg(spec: dict[str, Any]) -> str:
       .mini-box {{ fill: {THEME["white"]}; stroke: #9AA7B8; stroke-width: 1; }}
       .node-label {{ font-size: 12px; font-weight: 700; fill: {THEME["ink"]}; white-space: pre; }}
       .node-label.light {{ fill: {THEME["white"]}; }}
+      .product-kicker {{ font-size: 10px; fill: {THEME["muted"]}; }}
+      .product-caption {{ font-size: 16px; font-weight: 700; fill: {THEME["ink"]}; white-space: pre; }}
       .tiny {{ font-size: 9px; fill: {THEME["ink"]}; white-space: pre; }}
       .inactive-text {{ fill: {THEME["inactive_text"]}; }}
       .flow-label {{ font-size: 9px; font-weight: 800; paint-order: stroke; stroke: #FFFFFF; stroke-width: 3px; stroke-linejoin: round; }}
@@ -777,14 +851,15 @@ def render_svg(spec: dict[str, Any]) -> str:
     </style>
   </defs>
   <rect x="0" y="0" width="{WIDTH}" height="{HEIGHT}" fill="{THEME["white"]}"/>
-  <text x="16" y="32" class="subtitle">{esc(spec.get("subtitle"))}</text>
-  <text x="16" y="72" class="title">{title_svg}</text>
+  {subtitle_text}
+  <text x="16" y="{title_y}" class="title">{title_svg}</text>
   {account_text}
   <line x1="40" y1="{guide_y}" x2="1240" y2="{guide_y}" stroke="{THEME["line"]}" stroke-width="1"/>
   {"".join(zone_lines)}
   {purdue}
   {flows}
   {rendered_nodes}
+  {figure_text}
   <circle cx="1262" cy="674" r="7" fill="none" stroke="{THEME["ink"]}" stroke-width="1"/>
 </svg>
 """

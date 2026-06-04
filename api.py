@@ -161,15 +161,15 @@ def build_simple_flow_payload(request: DiagramTextRequest, products: list[dict[s
 
     nodes: list[dict[str, Any]] = [
         {"id": "source", "label": "USB Device /\nRemovable Media", "kind": "source", "x": 110, "y": 330},
-        {"id": "kiosk", "label": "Kiosk", "kind": "product", "product_type": "kiosk", "x": 310, "y": 315, "variant": "active"},
-        {"id": "core", "label": "Core", "kind": "product", "product_type": "core", "x": 310, "y": 425, "variant": "active"},
-        {"id": "verdict", "label": "Clean\nVerdict", "kind": "verdict", "x": 545, "y": 320},
-        {"id": "mft", "label": "MFT", "kind": "product", "product_type": "mft", "x": 790, "y": 315, "variant": "active"},
+        {"id": "kiosk", "label": "Kiosk", "kind": "product", "product_type": "kiosk", "x": 320, "y": 282, "variant": "active"},
+        {"id": "core", "label": "Core", "kind": "product", "product_type": "core", "x": 320, "y": 438, "variant": "active"},
+        {"id": "verdict", "label": "Clean\nVerdict", "kind": "verdict", "x": 555, "y": 320},
+        {"id": "mft", "label": "MFT", "kind": "product", "product_type": "mft", "x": 800, "y": 292, "variant": "active"},
         {"id": "destination", "label": destination_label, "kind": "entity", "icon": "server-rack", "x": 1015, "y": 318},
     ]
     flows: list[dict[str, Any]] = [
         {"from": "source", "to": "kiosk", "role": "ingress", "label": "scan media", "glyph": "media_red"},
-        {"from": "kiosk", "to": "core", "role": "primary", "label": "scan", "sync": True},
+        {"from": "kiosk", "to": "core", "role": "primary", "label": "", "route": "side", "bidirectional": True},
         {"from": "core", "to": "verdict", "role": "egress", "label": "approved", "glyph": "file_green"},
         {"from": "verdict", "to": "mft", "role": "egress", "label": "copy clean file", "glyph": "file_green"},
         {"from": "mft", "to": "destination", "role": "primary", "label": "deliver"},
@@ -180,7 +180,9 @@ def build_simple_flow_payload(request: DiagramTextRequest, products: list[dict[s
 
     return {
         "title": title,
-        "subtitle": "SECURING THE FLOW OF DATA",
+        "subtitle": "",
+        "title_color": "#2563EB",
+        "figure_caption": f"Figure: {title}",
         "account_name": request.account_name,
         "pattern": "custom",
         "include_purdue": request.include_purdue,
@@ -269,7 +271,9 @@ def claude_payload(request: DiagramTextRequest) -> dict[str, Any]:
                     "Create this JSON shape:\n"
                     "{\n"
                     '  "title": "short diagram title",\n'
-                    '  "subtitle": "SECURING THE FLOW OF DATA",\n'
+                    '  "subtitle": "optional subtitle, empty for simple use-case diagrams",\n'
+                    '  "title_color": "#2563EB",\n'
+                    '  "figure_caption": "Figure: short caption",\n'
                     '  "account_name": "optional account name",\n'
                     '  "pattern": "auto|custom|removable_media|secure_file_exchange|cross_domain",\n'
                     '  "include_purdue": false,\n'
