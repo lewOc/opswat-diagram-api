@@ -441,7 +441,7 @@ def node_size(node: dict[str, Any]) -> tuple[int, int]:
     if kind == "actor":
         return 82, 64
     if kind == "source":
-        return 82, 58
+        return 128, 72
     if kind == "zone":
         return 160, 112
     if kind == "quarantine":
@@ -463,6 +463,31 @@ def draw_multiline_text(x: int, y: int, value: Any, css_class: str, anchor: str 
     return "\n".join(
         f'<tspan x="{x}" dy="{0 if index == 0 else line_height}">{esc(line)}</tspan>' for index, line in enumerate(lines)
     ).join([f'<text x="{x}" y="{y}" text-anchor="{anchor}" class="{css_class}">', "</text>"])
+
+
+def wrap_label(value: Any, limit: int = 18, max_lines: int = 3) -> str:
+    explicit_lines = str(value or "").split("\n")
+    lines: list[str] = []
+    for explicit_line in explicit_lines:
+        words = explicit_line.split()
+        current = ""
+        for word in words:
+            candidate = f"{current} {word}".strip()
+            if len(candidate) <= limit:
+                current = candidate
+                continue
+            if current:
+                lines.append(current)
+            current = word
+            if len(lines) >= max_lines:
+                break
+        if current and len(lines) < max_lines:
+            lines.append(current)
+        if len(lines) >= max_lines:
+            break
+    if len(lines) == max_lines:
+        lines[-1] = truncate(lines[-1], limit)
+    return "\n".join(lines)
 
 
 def draw_zone_guide(zone: dict[str, Any], zone_top: int) -> str:
@@ -549,7 +574,8 @@ def draw_line_icon(kind: str, x: int, y: int) -> str:
 def draw_node(node: dict[str, Any]) -> str:
     x = int(node["x"])
     y = int(node["y"])
-    label = esc(node.get("label", ""))
+    raw_label = node.get("label", "")
+    label = esc(raw_label)
     kind = node.get("kind", "process")
     if kind == "product":
         product_type_value = node.get("product_type", "product")
@@ -576,19 +602,20 @@ def draw_node(node: dict[str, Any]) -> str:
         return f"""
           <rect x="{x}" y="{y}" width="82" height="64" rx="6" class="{box_class}"/>
           {draw_line_icon(icon_kind, x + 25, y + 8)}
-          <text x="{x+41}" y="{y+54}" text-anchor="middle" class="{label_class}">{label}</text>
+          {draw_multiline_text(x + 41, y + 52, wrap_label(raw_label, 13, 2), label_class, line_height=10)}
         """
     if kind == "source":
-        utility_kind = "media" if "media" in label.lower() or "usb" in label.lower() else "file"
+        width, height = node_size(node)
+        utility_kind = "media" if "media" in str(raw_label).lower() or "usb" in str(raw_label).lower() else "file"
         return f"""
-          <rect x="{x}" y="{y}" width="82" height="58" rx="4" class="source-box"/>
-          {draw_utility_icon(utility_kind, x + 24, y + 9, 34)}
-          <text x="{x+41}" y="{y+50}" text-anchor="middle" class="tiny">{label}</text>
+          <rect x="{x}" y="{y}" width="{width}" height="{height}" rx="6" class="source-box"/>
+          {draw_utility_icon(utility_kind, x + (width // 2) - 17, y + 12, 34)}
+          {draw_multiline_text(x + (width // 2), y + height - 23, wrap_label(raw_label, 18, 2), "tiny", line_height=11)}
         """
     if kind == "zone":
         return f"""
           <rect x="{x}" y="{y}" width="160" height="112" rx="8" class="zone-box"/>
-          <text x="{x+80}" y="{y+28}" text-anchor="middle" class="node-label">{label}</text>
+          {draw_multiline_text(x + 80, y + 28, wrap_label(raw_label, 18, 2), "node-label", line_height=14)}
           <g transform="translate({x+24},{y+48})" opacity="0.82">
             <rect width="28" height="24" class="mini-box"/><text x="14" y="39" text-anchor="middle" class="tiny">API</text>
             <rect x="48" width="28" height="24" class="mini-box"/><text x="62" y="39" text-anchor="middle" class="tiny">SFTP</text>
@@ -596,11 +623,12 @@ def draw_node(node: dict[str, Any]) -> str:
           </g>
         """
     if kind == "entity":
+        width, height = node_size(node)
         icon_kind = node.get("icon", "server-rack")
         return f"""
-          <rect x="{x}" y="{y}" width="120" height="92" rx="6" class="source-box"/>
-          {draw_line_icon(icon_kind, x + 45, y + 16)}
-          {draw_multiline_text(x + 60, y + 70, node.get("label", ""), "tiny")}
+          <rect x="{x}" y="{y}" width="{width}" height="{height}" rx="6" class="source-box"/>
+          {draw_line_icon(icon_kind, x + (width // 2) - 15, y + 16)}
+          {draw_multiline_text(x + (width // 2), y + height - 25, wrap_label(raw_label, 16, 2), "tiny", line_height=11)}
         """
     if kind == "verdict":
         verdict_label = node.get("label") or "Clean\nVerdict"
@@ -624,7 +652,7 @@ def draw_node(node: dict[str, Any]) -> str:
         """
     return f"""
       <rect x="{x}" y="{y}" width="96" height="58" rx="4" class="process-box"/>
-      <text x="{x+48}" y="{y+34}" text-anchor="middle" class="node-label">{label}</text>
+      {draw_multiline_text(x + 48, y + 29, wrap_label(raw_label, 14, 2), "node-label", line_height=14)}
     """
 
 
@@ -741,9 +769,9 @@ def render_svg(spec: dict[str, Any]) -> str:
       .mini-box {{ fill: {THEME["white"]}; stroke: #9AA7B8; stroke-width: 1; }}
       .node-label {{ font-size: 12px; font-weight: 700; fill: {THEME["ink"]}; white-space: pre; }}
       .node-label.light {{ fill: {THEME["white"]}; }}
-      .tiny {{ font-size: 8px; fill: {THEME["ink"]}; white-space: pre; }}
+      .tiny {{ font-size: 9px; fill: {THEME["ink"]}; white-space: pre; }}
       .inactive-text {{ fill: {THEME["inactive_text"]}; }}
-      .flow-label {{ font-size: 8px; font-weight: 700; }}
+      .flow-label {{ font-size: 9px; font-weight: 800; paint-order: stroke; stroke: #FFFFFF; stroke-width: 3px; stroke-linejoin: round; }}
       .line-icon,.icon-path {{ fill: none; stroke: {THEME["ink"]}; stroke-width: 1.2; }}
       .entity-icon * {{ fill: none; stroke: {THEME["near_black"]}; stroke-width: 1.2; stroke-linecap: round; stroke-linejoin: round; }}
     </style>
