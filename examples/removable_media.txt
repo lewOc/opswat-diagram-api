@@ -1,0 +1,3 @@
+An engineer on site needs to move a vendor patch from a USB stick into an OT network.
+Before the file can enter the high-security environment, the USB must be scanned at a MetaDefender Kiosk.
+MetaDefender Core should inspect the file, block malicious content into quarantine, and only allow clean files to be released through MetaDefender Managed File Transfer to the OT network.
