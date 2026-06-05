@@ -431,6 +431,15 @@ Site NAS</textarea>
       box.textContent = warnings.join(" ");
     }
 
+    function absoluteUrl(path) {
+      if (!path || typeof path !== "string") return "";
+      try {
+        return new URL(path, window.location.origin).toString();
+      } catch (_) {
+        return "";
+      }
+    }
+
     async function buildPrompt() {
       setBusy(true);
       try {
@@ -471,14 +480,17 @@ Site NAS</textarea>
         showWarnings(data.helper_warnings);
         const diagram = $("diagram");
         const isImage = data.output_method === "gpt_image";
-        const resultUrl = isImage ? data.image_url : data.svg_url;
-        const metadataUrl = data.json_url;
+        const resultUrl = absoluteUrl(isImage ? data.image_url : data.svg_url);
+        const metadataUrl = absoluteUrl(data.json_url);
+        if (!resultUrl) {
+          throw new Error(isImage ? "Image generation completed but no PNG URL was returned." : "Diagram generation completed but no SVG URL was returned.");
+        }
         diagram.src = resultUrl;
         diagram.style.display = "block";
         $("links").style.display = "flex";
         $("links").innerHTML = isImage
-          ? `<a href="${resultUrl}" target="_blank" rel="noreferrer">Open PNG</a><a href="${metadataUrl}" target="_blank" rel="noreferrer">Open metadata</a>`
-          : `<a href="${resultUrl}" target="_blank" rel="noreferrer">Open SVG</a><a href="${metadataUrl}" target="_blank" rel="noreferrer">Open JSON</a>`;
+          ? `<a href="${resultUrl}" target="_blank" rel="noreferrer">Open PNG</a>${metadataUrl ? `<a href="${metadataUrl}" target="_blank" rel="noreferrer">Open metadata</a>` : ""}`
+          : `<a href="${resultUrl}" target="_blank" rel="noreferrer">Open SVG</a>${metadataUrl ? `<a href="${metadataUrl}" target="_blank" rel="noreferrer">Open JSON</a>` : ""}`;
         $("status").textContent = isImage ? "GPT image generated." : "Diagram generated.";
         $("status").className = "status ok";
       } catch (error) {
