@@ -8,6 +8,10 @@ Current VM deployment target:
 - Port: `8020`
 - LAN helper URL: `http://192.168.0.184:8020/helper`
 - LAN API docs: `http://192.168.0.184:8020/docs`
+- Public helper URL: `https://diagrams.rndrlab.com/helper`
+- Public API docs: `https://diagrams.rndrlab.com/docs`
+- Cloudflare tunnel: `opswat-diagram-api`
+- Cloudflare tunnel service: `cloudflared-opswat-diagram-api.service`
 
 The VM `.env` is intentionally keyless. Users can provide their own OpenAI API key in the prompt helper when choosing GPT Image output.
 
@@ -18,12 +22,15 @@ ssh ops-web-tools@192.168.0.184
 systemctl --user status opswat-diagram-api.service
 systemctl --user restart opswat-diagram-api.service
 journalctl --user -u opswat-diagram-api.service -f
+systemctl --user status cloudflared-opswat-diagram-api.service
+journalctl --user -u cloudflared-opswat-diagram-api.service -f
 ```
 
 ## Health Check
 
 ```bash
 curl http://192.168.0.184:8020/api/health
+curl https://diagrams.rndrlab.com/api/health
 ```
 
 ## Updating The VM
@@ -37,9 +44,10 @@ ssh ops-web-tools@192.168.0.184 'cd /home/ops-web-tools/apps/opswat-diagram-api 
 
 ## Public Domain
 
-Because `192.168.0.184` is a private LAN address, public DNS for `rndrlab.com` cannot point directly at it. Use one of these approaches:
+The public route is served through a dedicated Cloudflare Tunnel:
 
-- Recommended: create a new Cloudflare Tunnel route, for example `diagrams.rndrlab.com`, pointing to `http://127.0.0.1:8020` on the VM.
-- Alternative: set up router port forwarding to the VM and point DNS to the public WAN IP.
+- Hostname: `diagrams.rndrlab.com`
+- Origin service: `http://127.0.0.1:8020`
+- Tunnel config: `/home/ops-web-tools/.cloudflared/opswat-diagram-api.yml`
 
-Do not reuse or modify the existing `pov.rndrlab.com` or `meetings.rndrlab.com` routes for this service.
+This route is separate from `pov.rndrlab.com` and `meetings.rndrlab.com`.
